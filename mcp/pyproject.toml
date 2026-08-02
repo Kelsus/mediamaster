@@ -1,0 +1,19 @@
+[project]
+name = "mediamaster-mcp"
+version = "0.1.0"
+description = "MCP server for the MediaMaster watchlist"
+requires-python = ">=3.12"
+dependencies = [
+    "mcp>=1.2",
+    "httpx>=0.27",
+]
+
+[project.scripts]
+mediamaster-mcp = "mediamaster_mcp.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mediamaster_mcp"]

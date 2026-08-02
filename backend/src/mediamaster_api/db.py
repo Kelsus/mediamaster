@@ -1,0 +1,205 @@
+import hashlib
+import os
+import secrets
+from typing import Any, Optional
+
+import boto3
+from boto3.dynamodb.conditions import Key
+from ulid import ULID
+
+from .models import Show, ShowCreate, ShowPatch, Status, now_iso
+
+_table = None
+
+
+def table():
+    global _table
+    if _table is None:
+        _table = boto3.resource("dynamodb").Table(os.environ["TABLE_NAME"])
+    return _table
+
+
+def _user_pk(uid: str) -> str:
+    return f"USER#{uid}"
+
+
+def _show_sk(show_id: str) -> str:
+    return f"SHOW#{show_id}"
+
+
+def _item_to_show(item: dict) -> Show:
+    return Show(
+        show_id=item["show_id"],
+        name=item["name"],
+        show_type=item["show_type"],
+        service=item.get("service"),
+        source=item.get("source"),
+        status=item["status"],
+        rating=int(item["rating"]) if item.get("rating") is not None else None,
+        created_at=item["created_at"],
+        updated_at=item["updated_at"],
+        status_changed_at=item["status_changed_at"],
+        rated_at=item.get("rated_at"),
+        llm_score=int(item["llm_score"]) if item.get("llm_score") is not None else None,
+        llm_reason=item.get("llm_reason"),
+        scored_at=item.get("scored_at"),
+        profile_version=item.get("profile_version"),
+    )
+
+
+def list_shows(uid: str) -> list[Show]:
+    shows: list[Show] = []
+    kwargs: dict[str, Any] = {
+        "KeyConditionExpression": Key("PK").eq(_user_pk(uid)) & Key("SK").begins_with("SHOW#"),
+    }
+    while True:
+        resp = table().query(**kwargs)
+        shows.extend(_item_to_show(i) for i in resp["Items"])
+        lek = resp.get("LastEvaluatedKey")
+        if not lek:
+            return shows
+        kwargs["ExclusiveStartKey"] = lek
+
+
+def create_show(uid: str, payload: ShowCreate) -> Show:
+    now = now_iso()
+    show_id = str(ULID())
+    created_at = payload.created_at or now
+    rating = payload.rating if payload.status == Status.done else None
+    item = {
+        "PK": _user_pk(uid),
+        "SK": _show_sk(show_id),
+        "show_id": show_id,
+        "name": payload.name,
+        "show_type": payload.show_type.value,
+        "status": payload.status.value,
+        "created_at": created_at,
+        "updated_at": now,
+        "status_changed_at": now,
+    }
+    if payload.service:
+        item["service"] = payload.service
+    if payload.source:
+        item["source"] = payload.source
+    if rating is not None:
+        item["rating"] = rating
+        item["rated_at"] = now
+    table().put_item(Item=item)
+    return _item_to_show(item)
+
+
+def get_show(uid: str, show_id: str) -> Optional[Show]:
+    resp = table().get_item(Key={"PK": _user_pk(uid), "SK": _show_sk(show_id)})
+    item = resp.get("Item")
+    return _item_to_show(item) if item else None
+
+
+def patch_show(uid: str, show: Show, patch: ShowPatch, fields_set: set[str]) -> Show:
+    now = now_iso()
+    item = show.model_dump(mode="json", exclude={"predicted_score", "score_breakdown"})
+
+    for field in ("name", "show_type", "service", "source"):
+        if field in fields_set:
+            value = getattr(patch, field)
+            item[field] = value.value if hasattr(value, "value") else value
+
+    new_status = patch.status.value if "status" in fields_set and patch.status else item["status"]
+    if new_status != item["status"]:
+        item["status"] = new_status
+        item["status_changed_at"] = now
+        if new_status != Status.done.value:
+            item["rating"] = None
+            item["rated_at"] = None
+    if "rating" in fields_set:
+        item["rating"] = patch.rating
+        item["rated_at"] = now if patch.rating is not None else None
+
+    item["updated_at"] = now
+    ddb_item = {
+        "PK": _user_pk(uid),
+        "SK": _show_sk(show.show_id),
+        **{k: v for k, v in item.items() if v is not None},
+    }
+    table().put_item(Item=ddb_item)
+    return _item_to_show(item)
+
+
+def delete_show(uid: str, show_id: str) -> None:
+    table().delete_item(Key={"PK": _user_pk(uid), "SK": _show_sk(show_id)})
+
+
+def write_show_score(uid: str, show_id: str, score: int, reason: str,
+                     scored_at: str, profile_version: str) -> None:
+    table().update_item(
+        Key={"PK": _user_pk(uid), "SK": _show_sk(show_id)},
+        # guard: the show may have been deleted mid-run
+        ConditionExpression="attribute_exists(PK)",
+        UpdateExpression="SET llm_score = :s, llm_reason = :r, scored_at = :t, profile_version = :v",
+        ExpressionAttributeValues={":s": score, ":r": reason, ":t": scored_at, ":v": profile_version},
+    )
+
+
+# --- Taste profile ------------------------------------------------------------
+
+PROFILE_SK = "TASTE#PROFILE"
+
+
+def get_profile(uid: str) -> Optional[dict]:
+    resp = table().get_item(Key={"PK": _user_pk(uid), "SK": PROFILE_SK})
+    return resp.get("Item")
+
+
+def put_profile(uid: str, updates: dict) -> None:
+    """Merge updates into the profile item (created on first write)."""
+    existing = get_profile(uid) or {"PK": _user_pk(uid), "SK": PROFILE_SK}
+    existing.update(updates)
+    table().put_item(Item={k: v for k, v in existing.items() if v is not None})
+
+
+# --- API tokens ---------------------------------------------------------------
+
+def _token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def create_token(uid: str, label: str) -> dict:
+    token = "mm_" + secrets.token_urlsafe(32)
+    h = _token_hash(token)
+    prefix = token[:11]  # "mm_" + 8 chars, enough to identify in a list
+    now = now_iso()
+    attrs = {"uid": uid, "label": label, "prefix": prefix, "created_at": now}
+    table().put_item(Item={"PK": f"APITOKEN#{h}", "SK": "LOOKUP", **attrs})
+    table().put_item(Item={"PK": _user_pk(uid), "SK": f"APITOKEN#{h}", **attrs})
+    return {"token": token, "prefix": prefix, "label": label, "created_at": now}
+
+
+def lookup_token(token: str) -> Optional[str]:
+    """Return uid for a valid API token, else None."""
+    if not token.startswith("mm_"):
+        return None
+    resp = table().get_item(Key={"PK": f"APITOKEN#{_token_hash(token)}", "SK": "LOOKUP"})
+    item = resp.get("Item")
+    return item["uid"] if item else None
+
+
+def list_tokens(uid: str) -> list[dict]:
+    resp = table().query(
+        KeyConditionExpression=Key("PK").eq(_user_pk(uid)) & Key("SK").begins_with("APITOKEN#")
+    )
+    return [
+        {"prefix": i["prefix"], "label": i["label"], "created_at": i["created_at"]}
+        for i in resp["Items"]
+    ]
+
+
+def delete_token(uid: str, prefix: str) -> bool:
+    resp = table().query(
+        KeyConditionExpression=Key("PK").eq(_user_pk(uid)) & Key("SK").begins_with("APITOKEN#")
+    )
+    for item in resp["Items"]:
+        if item["prefix"] == prefix:
+            h_sk = item["SK"]  # APITOKEN#<hash>
+            table().delete_item(Key={"PK": h_sk, "SK": "LOOKUP"})
+            table().delete_item(Key={"PK": _user_pk(uid), "SK": h_sk})
+            return True
+    return False

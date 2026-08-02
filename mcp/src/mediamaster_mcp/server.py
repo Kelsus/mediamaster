@@ -1,0 +1,251 @@
+"""MCP server for MediaMaster — a thin client over the deployed API.
+
+Env:
+    MEDIAMASTER_API_URL    e.g. https://dxxxx.cloudfront.net
+    MEDIAMASTER_API_TOKEN  an mm_... token minted in the app's Settings page
+"""
+
+import os
+from typing import Any, Literal, Optional
+
+import httpx
+from mcp.server.mcpserver import MCPServer
+
+mcp = MCPServer("mediamaster")
+
+VALID_STATUSES = ("to_watch", "watching", "done", "poubelle")
+
+
+def _client() -> httpx.Client:
+    url = os.environ.get("MEDIAMASTER_API_URL")
+    token = os.environ.get("MEDIAMASTER_API_TOKEN")
+    if not url or not token:
+        raise RuntimeError("Set MEDIAMASTER_API_URL and MEDIAMASTER_API_TOKEN")
+    return httpx.Client(
+        base_url=url.rstrip("/"),
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=30,
+    )
+
+
+def _board() -> dict:
+    with _client() as c:
+        resp = c.get("/api/board")
+        resp.raise_for_status()
+        return resp.json()
+
+
+def _brief(show: dict) -> dict:
+    out = {k: show[k] for k in ("show_id", "name", "show_type", "status") if k in show}
+    for k in ("service", "source", "rating", "predicted_score", "llm_score", "llm_reason"):
+        if show.get(k) is not None:
+            out[k] = show[k]
+    return out
+
+
+def _resolve(board: dict, show: str) -> dict:
+    """Resolve a ULID or (fuzzy) name to a single show; raise with candidates if ambiguous."""
+    all_shows = [s for col in board["columns"].values() for s in col]
+    for s in all_shows:
+        if s["show_id"] == show:
+            return s
+    needle = show.strip().casefold()
+    exact = [s for s in all_shows if s["name"].casefold() == needle]
+    if len(exact) == 1:
+        return exact[0]
+    matches = [s for s in all_shows if needle in s["name"].casefold()]
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        raise ValueError(f"No show matches '{show}'")
+    names = ", ".join(f"{s['name']} ({s['status']})" for s in matches[:10])
+    raise ValueError(f"Ambiguous — matches: {names}. Use an exact name or show_id.")
+
+
+def _patch(show_id: str, patch: dict) -> dict:
+    with _client() as c:
+        resp = c.patch(f"/api/shows/{show_id}", json=patch)
+        resp.raise_for_status()
+        return resp.json()
+
+
+@mcp.tool()
+def list_shows(status: Optional[str] = None) -> Any:
+    """List the board. to_watch comes pre-sorted by predicted preference (best first).
+
+    Args:
+        status: optionally limit to one column: to_watch | watching | done | poubelle
+    """
+    board = _board()
+    if status:
+        if status not in VALID_STATUSES:
+            raise ValueError(f"status must be one of {VALID_STATUSES}")
+        return [_brief(s) for s in board["columns"][status]]
+    return {k: [_brief(s) for s in v] for k, v in board["columns"].items()}
+
+
+@mcp.tool()
+def search_shows(query: str) -> Any:
+    """Find shows by (partial, case-insensitive) name across all columns."""
+    board = _board()
+    needle = query.strip().casefold()
+    hits = [
+        _brief(s)
+        for col in board["columns"].values()
+        for s in col
+        if needle in s["name"].casefold()
+    ]
+    return hits or f"No shows match '{query}'"
+
+
+@mcp.tool()
+def add_show(
+    name: str,
+    show_type: Literal["tv", "movie"],
+    service: Optional[str] = None,
+    source: Optional[str] = None,
+    status: str = "to_watch",
+) -> Any:
+    """Add a show or movie to the board.
+
+    Args:
+        name: title of the show/movie
+        show_type: tv or movie
+        service: streaming service it's on (optional)
+        source: who or what recommended it (optional)
+        status: which column to add it to (default to_watch)
+    """
+    if status not in VALID_STATUSES:
+        raise ValueError(f"status must be one of {VALID_STATUSES}")
+    with _client() as c:
+        resp = c.post(
+            "/api/shows",
+            json={
+                "name": name,
+                "show_type": show_type,
+                "service": service,
+                "source": source,
+                "status": status,
+            },
+        )
+        resp.raise_for_status()
+        return _brief(resp.json())
+
+
+@mcp.tool()
+def move_show(show: str, status: str, rating: Optional[int] = None) -> Any:
+    """Move a show to another column. Moving to done should include a rating (1-3).
+
+    Args:
+        show: show name (fuzzy matched) or show_id
+        status: to_watch | watching | done | poubelle
+        rating: 1 = it was fine, 2 = pretty good, 3 = absolute favorite (done only)
+    """
+    if status not in VALID_STATUSES:
+        raise ValueError(f"status must be one of {VALID_STATUSES}")
+    target = _resolve(_board(), show)
+    patch: dict = {"status": status}
+    if status == "done" and rating is not None:
+        patch["rating"] = rating
+    return _brief(_patch(target["show_id"], patch))
+
+
+@mcp.tool()
+def rate_show(show: str, rating: int) -> Any:
+    """Rate a show that's in done: 1 = fine, 2 = pretty good, 3 = absolute favorite.
+
+    Args:
+        show: show name (fuzzy matched) or show_id
+        rating: 1-3
+    """
+    target = _resolve(_board(), show)
+    if target["status"] != "done":
+        raise ValueError(
+            f"'{target['name']}' is in {target['status']} — move it to done first "
+            "(or use move_show with a rating)."
+        )
+    return _brief(_patch(target["show_id"], {"rating": rating}))
+
+
+@mcp.tool()
+def update_show(
+    show: str,
+    name: Optional[str] = None,
+    show_type: Optional[Literal["tv", "movie"]] = None,
+    service: Optional[str] = None,
+    source: Optional[str] = None,
+) -> Any:
+    """Edit a show's details (name, type, streaming service, recommendation source).
+
+    Args:
+        show: show name (fuzzy matched) or show_id
+        name/show_type/service/source: fields to change; omitted fields are untouched
+    """
+    target = _resolve(_board(), show)
+    patch = {
+        k: v
+        for k, v in {
+            "name": name,
+            "show_type": show_type,
+            "service": service,
+            "source": source,
+        }.items()
+        if v is not None
+    }
+    if not patch:
+        raise ValueError("Nothing to update")
+    return _brief(_patch(target["show_id"], patch))
+
+
+@mcp.tool()
+def delete_show(show: str, confirm: bool = False) -> Any:
+    """Permanently delete a show. Prefer move_show(..., 'poubelle') for disliked shows —
+    poubelle keeps the negative signal that trains the To Watch sorting.
+
+    Args:
+        show: show name (fuzzy matched) or show_id
+        confirm: must be true to actually delete
+    """
+    target = _resolve(_board(), show)
+    if not confirm:
+        raise ValueError(
+            f"Refusing to delete '{target['name']}' without confirm=true. "
+            "Consider move_show to 'poubelle' instead — it feeds the recommendation signal."
+        )
+    with _client() as c:
+        resp = c.delete(f"/api/shows/{target['show_id']}")
+        resp.raise_for_status()
+    return f"Deleted '{target['name']}'"
+
+
+@mcp.tool()
+def get_taste_profile() -> Any:
+    """Read Claude's taste profile of the owner, its status, and last scoring run."""
+    with _client() as c:
+        resp = c.get("/api/taste")
+        resp.raise_for_status()
+        return resp.json()
+
+
+@mcp.tool()
+def rescore_board() -> Any:
+    """Kick off a full taste re-profiling + re-scoring of the To Watch column.
+
+    Runs Claude Opus 5 over the owner's entire rating history (~$1-2, takes a
+    couple of minutes, runs in the background). Check get_taste_profile for
+    completion status.
+    """
+    with _client() as c:
+        resp = c.post("/api/rescore")
+        if resp.status_code == 409:
+            return "A re-score is already running — check get_taste_profile for status."
+        resp.raise_for_status()
+        return "Re-scoring started; it finishes in a couple of minutes."
+
+
+def main() -> None:
+    mcp.run()
+
+
+if __name__ == "__main__":
+    main()
