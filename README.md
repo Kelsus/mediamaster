@@ -1,5 +1,41 @@
 # MediaMaster
 
+A TV show and Movie "To Watch" list with smarts. Made by Jon Christensen at 
+Kelsus.
+
+I hear about TV shows and movies all the time. On X on TikTok from friends 
+and even from other TV shows and movies. I like to keep a list of the ones
+that sound interesting. 
+
+I used to do this with a Kanban board in Notion, and it worked fine. But 
+there were a few things I didn't like:
+
+1. You have to open Notion and navigate to the project to add a new show
+2. Notion has a 'load more' button for long columns. So to see something
+at the end of a column you have to load and load and load. And then,
+especially on their mobile app, if you drill into something and then come
+back to the list, your list only contains the initially loaded elements.
+You have to load them all over again! What the actual fuck, Notion? Are
+you not professional software developers?
+3. Once your To Watch list becomes really long, the stuff you added long
+ago sinks to the bottom and gets forgotten. So you really only end up
+watching things you've recently added to the list (new things are at the
+top -- per Kanban).
+
+This product addresses each of these problems. The coolest part is that it
+uses LLMs to understand your taste and sorts the To Watch column by
+movies and TV shows you're most likely to love. And you have control
+over your taste profile in case you want to tweak it.
+
+This is really designed to be a one user app. You can install your own 
+on your own AWS account. The authentication is just there for security,
+not for multi-user features.
+
+Below here is the AI's description. It's mainly helpful for your AI to get its
+'head' around how it works:
+
+---
+
 A self-hosted watchlist kanban that **learns your taste with Claude**. Four
 columns — **To Watch · Watching · Done · La Poubelle** — where finished shows
 get a 1–3★ rating, La Poubelle counts as a strong dislike, and the To Watch
