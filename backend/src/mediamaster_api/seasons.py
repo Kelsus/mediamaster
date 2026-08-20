@@ -16,6 +16,11 @@ SCOUT_BATCH_SIZE = 40
 MAX_CONTINUATIONS = 5
 WEB_SEARCHES_PER_BATCH = 4
 
+# "Yellowstone Seasons 1-3", "Suits Seasons 1 and 2", "Lioness Seasons 1 & 2"
+_SEASON_RANGE_RE = re.compile(
+    r"^(?P<base>.+?)[\s\-–:,]*\(?\bseasons\s*(?P<a>\d{1,2})\s*(?:[-–&+]|,|and|to|through)\s*(?P<b>\d{1,2})\)?$",
+    re.IGNORECASE,
+)
 # "Euphoria Season 2", "Fargo S2", "Slow Horses - Series 4", "Taskmaster (Season 12)"
 _SEASON_RE = re.compile(
     r"^(?P<base>.+?)[\s\-–:,]*\(?\b(?:season|series|szn|s)\.?\s*(?P<num>\d{1,2})\)?$",
@@ -32,6 +37,9 @@ _ROMAN = {"i": 1, "ii": 2, "iii": 3, "iv": 4, "v": 5, "vi": 6, "vii": 7, "viii":
 def parse_name(name: str) -> tuple[str, Optional[int]]:
     """Split a card name into (base title, season number or None)."""
     cleaned = re.sub(r"\s+", " ", name).strip()
+    m = _SEASON_RANGE_RE.match(cleaned)
+    if m:
+        return m.group("base").rstrip(" -–:,("), max(int(m.group("a")), int(m.group("b")))
     for pattern in (_SEASON_RE, _PART_RE):
         m = pattern.match(cleaned)
         if m:

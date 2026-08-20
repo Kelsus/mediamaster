@@ -36,6 +36,10 @@ def make_show(name, status=Status.done, rating=None, show_type=ShowType.tv, serv
     ("The Bear Part 2", "The Bear", 2),
     ("Attack on Titan Part III", "Attack on Titan", 3),
     ("Stranger Things Vol. 2", "Stranger Things", 2),
+    ("Yellowstone Seasons 1-3", "Yellowstone", 3),
+    ("Suits Seasons 1 and 2", "Suits", 2),
+    ("Lioness Seasons 1 & 2", "Lioness", 2),
+    ("Fauda Seasons 2 through 4", "Fauda", 4),
     ("Cars 2", "Cars 2", None),           # 's 2' inside a word is not a season
     ("The Four Seasons", "The Four Seasons", None),  # 'Seasons' is not 'Season N'
     ("Severance", "Severance", None),
