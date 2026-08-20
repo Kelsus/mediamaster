@@ -200,23 +200,29 @@ def run_scout(uid: str, franchise: str | None = None) -> dict:
                     + totals["cache_creation_input_tokens"] * 6.25) / 1_000_000
         log.info("scout complete: checked=%d searched=%d created=%s est_cost=$%.2f",
                  checked, searched, created, est_cost)
-        db.put_scout_state(uid, {
-            "scout_status": "idle",
-            "started_at": None,
-            "last_run": {
-                "finished_at": now_iso(),
-                "mode": "full" if full_sweep else "single",
-                "checked": checked,
-                "web_searches": searched,
-                "created": created,
-                "est_cost_usd": f"{est_cost:.2f}",
-            },
-        })
+        run_info = {
+            "finished_at": now_iso(),
+            "mode": "full" if full_sweep else "single",
+            "checked": checked,
+            "web_searches": searched,
+            "created": created,
+            "est_cost_usd": f"{est_cost:.2f}",
+        }
+        if full_sweep:
+            db.put_scout_state(uid, {"scout_status": "idle", "started_at": None,
+                                     "last_run": run_info})
+        else:
+            # Single runs hold no lock — never touch scout_status/started_at,
+            # or they release a concurrently running full sweep's lock.
+            db.put_scout_state(uid, {"last_single_run": run_info})
         return {"created": created}
     except Exception as e:
         log.exception("scout run failed")
-        db.put_scout_state(uid, {"scout_status": "idle", "started_at": None,
-                                 "last_error": f"{type(e).__name__}: {e}"})
+        if full_sweep:
+            db.put_scout_state(uid, {"scout_status": "idle", "started_at": None,
+                                     "last_error": f"{type(e).__name__}: {e}"})
+        else:
+            db.put_scout_state(uid, {"last_single_error": f"{type(e).__name__}: {e}"})
         raise
 
 

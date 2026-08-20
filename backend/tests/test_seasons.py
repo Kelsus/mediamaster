@@ -175,6 +175,28 @@ def test_scout_creates_deduped_cards(monkeypatch):
     assert "premiered 2025-01-17" in scored[0][1]
 
 
+def test_single_scout_never_touches_the_full_sweep_lock(monkeypatch):
+    from mediamaster_api import scorer
+
+    shows = [make_show("Severance", rating=3)]
+    state_writes = []
+    monkeypatch.setattr(scorer.db, "list_shows", lambda uid: shows)
+    monkeypatch.setattr(scorer.db, "get_scout_state",
+                        lambda uid: {"scout_status": "running", "started_at": "2026-01-01T00:00:00+00:00"})
+    monkeypatch.setattr(scorer.db, "put_scout_state", lambda uid, u: state_writes.append(u))
+    monkeypatch.setattr(scorer.db, "get_profile", lambda uid: None)
+    monkeypatch.setattr(scorer.taste, "client", lambda: None)
+    monkeypatch.setattr(
+        scorer.seasons, "check_franchises",
+        lambda c, cands, t: ([], {"input_tokens": 0, "output_tokens": 0,
+                                  "cache_creation_input_tokens": 0,
+                                  "cache_read_input_tokens": 0}, 0))
+
+    scorer.run_scout("uid", franchise="Severance")
+    assert all("scout_status" not in w and "started_at" not in w for w in state_writes)
+    assert any("last_single_run" in w for w in state_writes)
+
+
 def test_scout_skips_when_next_season_already_on_board(monkeypatch):
     from mediamaster_api import scorer
 

@@ -162,6 +162,7 @@ def _scout_response(state: dict | None) -> dict:
     return {
         "scout_status": "running" if scout_is_running(s) else "idle",
         "last_run": s.get("last_run"),
+        "last_single_run": s.get("last_single_run"),
         "last_error": s.get("last_error"),
     }
 
