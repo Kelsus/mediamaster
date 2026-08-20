@@ -7,9 +7,9 @@ from fastapi.middleware.gzip import GZipMiddleware
 from mangum import Mangum
 from pydantic import BaseModel, Field
 
-from . import db, scoring
+from . import db, scoring, seasons
 from .auth import current_uid, jwt_only_uid
-from .models import BulkCreate, Show, ShowCreate, ShowPatch, Status, TokenCreate
+from .models import BulkCreate, Show, ShowCreate, ShowPatch, ShowType, Status, TokenCreate
 
 log = logging.getLogger(__name__)
 
@@ -89,7 +89,20 @@ def patch_show(show_id: str, patch: ShowPatch, uid: str = Depends(current_uid)) 
     target_status = patch.status or show.status
     if patch.rating is not None and target_status != Status.done:
         raise HTTPException(422, "Only shows in Done can be rated")
-    return db.patch_show(uid, show, patch, patch.model_fields_set)
+    updated = db.patch_show(uid, show, patch, patch.model_fields_set)
+    # Liking a tv season is the trigger to look for its successor.
+    if (
+        updated.show_type == ShowType.tv
+        and updated.status == Status.done
+        and (updated.rating or 0) >= 2
+        and updated.rating != show.rating
+    ):
+        try:
+            base, _ = seasons.parse_name(updated.name)
+            _invoke_scorer({"uid": uid, "mode": "scout", "franchise": base})
+        except Exception:
+            log.exception("season-scout invoke failed")
+    return updated
 
 
 @app.delete("/api/shows/{show_id}", status_code=204)
@@ -139,6 +152,36 @@ def rescore(uid: str = Depends(current_uid)) -> dict:
     except Exception:
         log.exception("rescore invoke failed")
         raise HTTPException(502, "Could not start the scorer")
+    return {"status": "started"}
+
+
+def _scout_response(state: dict | None) -> dict:
+    from .scorer import scout_is_running
+
+    s = state or {}
+    return {
+        "scout_status": "running" if scout_is_running(s) else "idle",
+        "last_run": s.get("last_run"),
+        "last_error": s.get("last_error"),
+    }
+
+
+@app.get("/api/scout")
+def get_scout(uid: str = Depends(current_uid)) -> dict:
+    return _scout_response(db.get_scout_state(uid))
+
+
+@app.post("/api/scout", status_code=202)
+def scout(uid: str = Depends(current_uid)) -> dict:
+    from .scorer import scout_is_running
+
+    if scout_is_running(db.get_scout_state(uid)):
+        raise HTTPException(409, "A season scout is already running")
+    try:
+        _invoke_scorer({"uid": uid, "mode": "scout"})
+    except Exception:
+        log.exception("scout invoke failed")
+        raise HTTPException(502, "Could not start the season scout")
     return {"status": "started"}
 
 

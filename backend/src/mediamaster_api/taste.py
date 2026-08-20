@@ -141,6 +141,11 @@ profile. Recommendation sources mentioned on a candidate are evidence: weigh \
 them by the reliability notes in the profile. If you don't recognize a title, \
 score from metadata alone and stay near 50.
 
+If a candidate is a later season of a show whose earlier seasons appear in the \
+profile's rating history, the person's OWN verdict on those earlier seasons is \
+the strongest evidence there is — weight it above general reception. A new \
+season of a 3-star favorite should rank near the top of the queue.
+
 For each show give a concrete reason of 12 words or fewer that cites the \
 decisive factor (e.g. "slow-burn crime saga, same vein as your 3-star picks").
 

@@ -3,7 +3,65 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { api, getAccessToken } from '../api/client'
 import { enrollPasskey, listPasskeys } from '../api/cognito'
-import type { ApiToken, TasteProfile } from '../api/types'
+import type { ApiToken, ScoutState, TasteProfile } from '../api/types'
+
+function ScoutSection() {
+  const qc = useQueryClient()
+
+  const scout = useQuery<ScoutState>({
+    queryKey: ['scout'],
+    queryFn: () => api<ScoutState>('/api/scout'),
+    refetchInterval: (query) => (query.state.data?.scout_status === 'running' ? 5000 : false),
+  })
+
+  const running = scout.data?.scout_status === 'running'
+
+  const start = useMutation({
+    mutationFn: () => api('/api/scout', { method: 'POST' }),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['scout'] }),
+  })
+
+  const status = scout.data?.scout_status
+  useEffect(() => {
+    if (status === 'idle') qc.invalidateQueries({ queryKey: ['board'] })
+  }, [status, qc])
+
+  const s = scout.data
+  const created = s?.last_run?.created ?? []
+
+  return (
+    <section>
+      <h2>Season Scout</h2>
+      <p>
+        Checks which shows you finished (and liked) have a new season out — using web search for
+        anything recent — and drops the missing "Season N" cards into To Watch. Runs automatically
+        on the 1st of each month, when you rate a season 2★ or better, or on demand here.
+      </p>
+      <div className="taste-actions">
+        <button
+          type="button"
+          className="button-primary"
+          disabled={running || start.isPending}
+          onClick={() => start.mutate()}
+        >
+          {running ? 'Scouting… (takes a few minutes)' : 'Scout for new seasons'}
+        </button>
+        {s?.last_run && (
+          <span className="settings-msg">
+            Last run {new Date(s.last_run.finished_at).toLocaleString()}: checked{' '}
+            {s.last_run.checked} shows, added {created.length} (~${s.last_run.est_cost_usd})
+          </span>
+        )}
+      </div>
+      {s?.last_error && <p className="taste-error">Last run failed: {s.last_error}</p>}
+      {created.length > 0 && (
+        <p className="settings-msg">
+          Added to your queue: {created.join(' · ')}
+        </p>
+      )}
+    </section>
+  )
+}
 
 function TasteSection() {
   const qc = useQueryClient()
@@ -156,6 +214,7 @@ export function SettingsPage() {
 
       <main className="settings">
         <TasteSection />
+        <ScoutSection />
 
         <section>
           <h2>Passkeys</h2>

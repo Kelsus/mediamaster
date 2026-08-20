@@ -156,6 +156,23 @@ def put_profile(uid: str, updates: dict) -> None:
     table().put_item(Item={k: v for k, v in existing.items() if v is not None})
 
 
+# --- Season scout state ---------------------------------------------------------
+
+SCOUT_SK = "SCOUT#STATE"
+
+
+def get_scout_state(uid: str) -> Optional[dict]:
+    resp = table().get_item(Key={"PK": _user_pk(uid), "SK": SCOUT_SK})
+    return resp.get("Item")
+
+
+def put_scout_state(uid: str, updates: dict) -> None:
+    """Merge updates into the scout-state item (created on first write)."""
+    existing = get_scout_state(uid) or {"PK": _user_pk(uid), "SK": SCOUT_SK}
+    existing.update(updates)
+    table().put_item(Item={k: v for k, v in existing.items() if v is not None})
+
+
 # --- API tokens ---------------------------------------------------------------
 
 def _token_hash(token: str) -> str:

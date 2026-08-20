@@ -8,6 +8,8 @@ from aws_cdk import (
     aws_cloudfront_origins as origins,
     aws_cognito as cognito,
     aws_dynamodb as dynamodb,
+    aws_events as events,
+    aws_events_targets as targets,
     aws_iam as iam,
     aws_lambda as lambda_,
     aws_s3 as s3,
@@ -90,6 +92,7 @@ class MediamasterStack(cdk.Stack):
             environment={
                 "TABLE_NAME": table.table_name,
                 "ANTHROPIC_KEY_PARAM": anthropic_key_param,
+                "USER_POOL_ID": user_pool.user_pool_id,
             },
         )
         table.grant_read_write_data(scorer_fn)
@@ -100,6 +103,26 @@ class MediamasterStack(cdk.Stack):
                     f"arn:aws:ssm:{self.region}:{self.account}:parameter{anthropic_key_param}"
                 ],
             )
+        )
+        # The scheduled scout resolves the pool's single user itself.
+        scorer_fn.add_to_role_policy(
+            iam.PolicyStatement(
+                actions=["cognito-idp:ListUsers"],
+                resources=[user_pool.user_pool_arn],
+            )
+        )
+
+        # Monthly season scout: 09:00 UTC on the 1st.
+        events.Rule(
+            self,
+            "MonthlySeasonScout",
+            schedule=events.Schedule.cron(minute="0", hour="9", day="1", month="*", year="*"),
+            targets=[
+                targets.LambdaFunction(
+                    scorer_fn,
+                    event=events.RuleTargetInput.from_object({"mode": "scout"}),
+                )
+            ],
         )
 
         api_fn = lambda_.Function(

@@ -48,6 +48,19 @@ export interface TasteProfile {
   last_error: string | null
 }
 
+export interface ScoutState {
+  scout_status: 'idle' | 'running'
+  last_run: {
+    finished_at: string
+    mode: 'full' | 'single'
+    checked: number
+    web_searches: number
+    created: string[]
+    est_cost_usd: string
+  } | null
+  last_error: string | null
+}
+
 export interface Board {
   columns: Record<Status, Show[]>
 }

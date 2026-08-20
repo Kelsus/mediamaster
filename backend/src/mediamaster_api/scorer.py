@@ -10,8 +10,8 @@ from datetime import datetime, timedelta, timezone
 
 from botocore.exceptions import ClientError
 
-from . import db, taste
-from .models import Status, now_iso
+from . import db, seasons, taste
+from .models import ShowCreate, ShowType, Status, now_iso
 
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
@@ -20,10 +20,14 @@ STALE_LOCK_MINUTES = 20
 
 
 def handler(event, context):
-    uid = event["uid"]
+    # The monthly EventBridge rule can't know the Cognito sub; resolve the
+    # pool's (single) user when uid is absent.
+    uid = event.get("uid") or _default_uid()
     mode = event.get("mode", "full")
     if mode == "single":
         return score_single(uid, event["show_id"])
+    if mode == "scout":
+        return run_scout(uid, franchise=event.get("franchise"))
     return run_full(uid)
 
 
@@ -123,3 +127,127 @@ def score_single(uid: str, show_id: str) -> dict:
 def _add(totals: dict, usage: dict) -> None:
     for k in totals:
         totals[k] += usage.get(k, 0)
+
+
+def _default_uid() -> str:
+    import os
+
+    import boto3
+
+    users = boto3.client("cognito-idp").list_users(
+        UserPoolId=os.environ["USER_POOL_ID"], Limit=2
+    )["Users"]
+    if len(users) != 1:
+        raise RuntimeError(f"expected exactly 1 user, found {len(users)}")
+    return next(a["Value"] for a in users[0]["Attributes"] if a["Name"] == "sub")
+
+
+def scout_is_running(state: dict | None) -> bool:
+    if not state or state.get("scout_status") != "running":
+        return False
+    started = state.get("started_at")
+    if not started:
+        return False
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=STALE_LOCK_MINUTES)
+    return datetime.fromisoformat(started) > cutoff
+
+
+def run_scout(uid: str, franchise: str | None = None) -> dict:
+    """Find released-but-untracked next seasons; create To Watch cards for them.
+
+    franchise=None sweeps every eligible franchise (monthly / manual runs);
+    a franchise name checks just that one (fired when Jon rates a season >=2).
+    """
+    full_sweep = franchise is None
+    state = db.get_scout_state(uid)
+    if full_sweep:
+        if scout_is_running(state):
+            log.info("scout already in progress for %s; skipping", uid)
+            return {"skipped": "already_running"}
+        db.put_scout_state(uid, {"scout_status": "running", "started_at": now_iso(),
+                                 "last_error": None})
+
+    totals = {"input_tokens": 0, "output_tokens": 0,
+              "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
+    try:
+        shows = db.list_shows(uid)
+        franchises = seasons.group_franchises(shows)
+        if full_sweep:
+            targets = [f for f in franchises.values() if seasons.eligible(f)]
+        else:
+            match = franchises.get(seasons._key(franchise))
+            targets = [match] if match and seasons.eligible(match) else []
+        log.info("scout: %d eligible franchises (%s)", len(targets),
+                 "full sweep" if full_sweep else f"single: {franchise}")
+
+        today = now_iso()[:10]
+        created: list[str] = []
+        checked = searched = 0
+        for i in range(0, len(targets), seasons.SCOUT_BATCH_SIZE):
+            batch = targets[i:i + seasons.SCOUT_BATCH_SIZE]
+            candidates = [{"franchise": f.base, "have_season": f.max_season} for f in batch]
+            results, usage, n_searches = seasons.check_franchises(
+                taste.client(), candidates, today)
+            _add(totals, usage)
+            checked += len(candidates)
+            searched += n_searches
+            log.info("scout batch %d: %d results, %d searches, usage=%s",
+                     i // seasons.SCOUT_BATCH_SIZE + 1, len(results), n_searches, usage)
+            created.extend(_create_cards(uid, franchises, results))
+
+        est_cost = (totals["input_tokens"] * 5 + totals["output_tokens"] * 25
+                    + totals["cache_read_input_tokens"] * 0.5
+                    + totals["cache_creation_input_tokens"] * 6.25) / 1_000_000
+        log.info("scout complete: checked=%d searched=%d created=%s est_cost=$%.2f",
+                 checked, searched, created, est_cost)
+        db.put_scout_state(uid, {
+            "scout_status": "idle",
+            "started_at": None,
+            "last_run": {
+                "finished_at": now_iso(),
+                "mode": "full" if full_sweep else "single",
+                "checked": checked,
+                "web_searches": searched,
+                "created": created,
+                "est_cost_usd": f"{est_cost:.2f}",
+            },
+        })
+        return {"created": created}
+    except Exception as e:
+        log.exception("scout run failed")
+        db.put_scout_state(uid, {"scout_status": "idle", "started_at": None,
+                                 "last_error": f"{type(e).__name__}: {e}"})
+        raise
+
+
+def _create_cards(uid: str, franchises: dict, results: list[dict]) -> list[str]:
+    """Create To Watch cards for released next seasons; dedupe; taste-score."""
+    profile_item = db.get_profile(uid)
+    profile_text = (profile_item or {}).get("profile_text")
+    created = []
+    for r in results:
+        if not r.get("released"):
+            continue
+        f = franchises.get(seasons._key(r.get("franchise", "")))
+        if f is None:
+            continue
+        next_season = int(r.get("next_season") or f.max_season + 1)
+        if f.max_season >= next_season:
+            continue  # already on the board somewhere
+        name = f"{f.base} Season {next_season}"
+        show = db.create_show(uid, ShowCreate(
+            name=name, show_type=ShowType.tv, service=f.service,
+            source="Season Scout", status=Status.to_watch))
+        note = (r.get("note") or "").strip()
+        if profile_text:
+            try:
+                scores, usage = taste.score_batch(taste.client(), profile_text, [show])
+                if scores:
+                    db.write_show_score(
+                        uid, show.show_id, scores[0].score,
+                        f"{scores[0].reason} ({note})" if note else scores[0].reason,
+                        now_iso(), (profile_item or {}).get("ratings_hash", ""))
+            except Exception:
+                log.exception("taste-scoring scout card %s failed; card kept", name)
+        created.append(name)
+    return created

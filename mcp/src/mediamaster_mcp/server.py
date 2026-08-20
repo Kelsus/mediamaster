@@ -243,6 +243,26 @@ def rescore_board() -> Any:
         return "Re-scoring started; it finishes in a couple of minutes."
 
 
+@mcp.tool()
+def scout_seasons() -> Any:
+    """Scan finished-and-liked tv shows for newly released seasons and add the
+    missing "Season N" cards to To Watch.
+
+    Uses web search for recent releases (~$2-4 for a full sweep, a few minutes,
+    runs in the background). Call again later to see last_run results, which
+    include the list of cards it created.
+    """
+    with _client() as c:
+        state = c.get("/api/scout").json()
+        if state.get("scout_status") == "running":
+            return {"status": "already_running", "last_run": state.get("last_run")}
+        resp = c.post("/api/scout")
+        if resp.status_code == 409:
+            return {"status": "already_running", "last_run": state.get("last_run")}
+        resp.raise_for_status()
+        return {"status": "started", "previous_run": state.get("last_run")}
+
+
 def main() -> None:
     mcp.run()
 
