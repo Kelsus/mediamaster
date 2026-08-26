@@ -120,7 +120,7 @@ class MediamasterStack(cdk.Stack):
             targets=[
                 targets.LambdaFunction(
                     scorer_fn,
-                    event=events.RuleTargetInput.from_object({"mode": "scout"}),
+                    event=events.RuleTargetInput.from_object({"mode": "scout", "medium": "all"}),
                 )
             ],
         )

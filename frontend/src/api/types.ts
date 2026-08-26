@@ -1,4 +1,4 @@
-export type ShowType = 'tv' | 'movie'
+export type ShowType = 'tv' | 'movie' | 'book'
 export type Status = 'to_watch' | 'watching' | 'done' | 'poubelle'
 
 export interface ScoreFeature {
@@ -15,10 +15,17 @@ export interface ScoreBreakdown {
   show_type?: ScoreFeature
 }
 
+export type Medium = 'show' | 'book'
+
 export interface Show {
   show_id: string
   name: string
   show_type: ShowType
+  medium: Medium
+  author?: string
+  series?: string
+  series_index?: number
+  unverified?: boolean
   service?: string
   source?: string
   status: Status

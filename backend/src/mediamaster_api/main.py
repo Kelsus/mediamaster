@@ -9,7 +9,9 @@ from pydantic import BaseModel, Field
 
 from . import db, scoring, seasons
 from .auth import current_uid, jwt_only_uid
-from .models import BulkCreate, Show, ShowCreate, ShowPatch, ShowType, Status, TokenCreate
+from .models import (
+    BulkCreate, Medium, Show, ShowCreate, ShowPatch, ShowType, Status, TokenCreate,
+)
 
 log = logging.getLogger(__name__)
 
@@ -32,8 +34,8 @@ def me(uid: str = Depends(current_uid)) -> dict:
 
 
 @app.get("/api/board")
-def board(uid: str = Depends(current_uid)) -> dict:
-    shows = db.list_shows(uid)
+def board(medium: Medium = Medium.show, uid: str = Depends(current_uid)) -> dict:
+    shows = [s for s in db.list_shows(uid) if s.medium == medium]
     scoring.score_board(shows)
 
     by_status: dict[str, list[Show]] = {s.value: [] for s in Status}
@@ -69,7 +71,8 @@ def create_show(payload: ShowCreate, uid: str = Depends(current_uid)) -> Show:
     show = db.create_show(uid, payload)
     if show.status == Status.to_watch:
         try:
-            _invoke_scorer({"uid": uid, "mode": "single", "show_id": show.show_id})
+            _invoke_scorer({"uid": uid, "mode": "single", "show_id": show.show_id,
+                            "medium": show.medium.value})
         except Exception:
             log.exception("single-show scoring invoke failed")
     return show
@@ -90,18 +93,21 @@ def patch_show(show_id: str, patch: ShowPatch, uid: str = Depends(current_uid)) 
     if patch.rating is not None and target_status != Status.done:
         raise HTTPException(422, "Only shows in Done can be rated")
     updated = db.patch_show(uid, show, patch, patch.model_fields_set)
-    # Liking a tv season is the trigger to look for its successor.
+    # Liking a tv season (or a series book) triggers the hunt for its successor.
     if (
-        updated.show_type == ShowType.tv
-        and updated.status == Status.done
+        updated.status == Status.done
         and (updated.rating or 0) >= 2
         and updated.rating != show.rating
     ):
         try:
-            base, _ = seasons.parse_name(updated.name)
-            _invoke_scorer({"uid": uid, "mode": "scout", "franchise": base})
+            if updated.medium == Medium.book and updated.series:
+                _invoke_scorer({"uid": uid, "mode": "scout", "medium": "book",
+                                "series": updated.series})
+            elif updated.show_type == ShowType.tv:
+                base, _ = seasons.parse_name(updated.name)
+                _invoke_scorer({"uid": uid, "mode": "scout", "franchise": base})
         except Exception:
-            log.exception("season-scout invoke failed")
+            log.exception("scout invoke failed")
     return updated
 
 
@@ -131,58 +137,63 @@ def _profile_response(profile: dict | None) -> dict:
 
 
 @app.get("/api/taste")
-def get_taste(uid: str = Depends(current_uid)) -> dict:
-    return _profile_response(db.get_profile(uid))
+def get_taste(medium: Medium = Medium.show, uid: str = Depends(current_uid)) -> dict:
+    return _profile_response(db.get_profile(uid, medium.value))
 
 
 @app.put("/api/taste/notes")
-def put_taste_notes(payload: NotesUpdate, uid: str = Depends(current_uid)) -> dict:
-    db.put_profile(uid, {"notes": payload.notes.strip() or None})
-    return _profile_response(db.get_profile(uid))
+def put_taste_notes(
+    payload: NotesUpdate, medium: Medium = Medium.show, uid: str = Depends(current_uid)
+) -> dict:
+    db.put_profile(uid, {"notes": payload.notes.strip() or None}, medium.value)
+    return _profile_response(db.get_profile(uid, medium.value))
 
 
 @app.post("/api/rescore", status_code=202)
-def rescore(uid: str = Depends(current_uid)) -> dict:
+def rescore(medium: Medium = Medium.show, uid: str = Depends(current_uid)) -> dict:
     from .scorer import is_running
 
-    if is_running(db.get_profile(uid)):
+    if is_running(db.get_profile(uid, medium.value)):
         raise HTTPException(409, "A re-score is already running")
     try:
-        _invoke_scorer({"uid": uid, "mode": "full"})
+        _invoke_scorer({"uid": uid, "mode": "full", "medium": medium.value})
     except Exception:
         log.exception("rescore invoke failed")
         raise HTTPException(502, "Could not start the scorer")
     return {"status": "started"}
 
 
-def _scout_response(state: dict | None) -> dict:
+def _scout_response(state: dict | None, medium: str) -> dict:
     from .scorer import scout_is_running
 
     s = state or {}
+    # Per-medium run history; bare last_run is the pre-books alias for shows.
+    last_run = s.get(f"last_run_{medium}") or (s.get("last_run") if medium == "show" else None)
     return {
         "scout_status": "running" if scout_is_running(s) else "idle",
-        "last_run": s.get("last_run"),
-        "last_single_run": s.get("last_single_run"),
+        "last_run": last_run,
+        "last_single_run": s.get(f"last_single_run_{medium}") or
+                           (s.get("last_single_run") if medium == "show" else None),
         "last_error": s.get("last_error"),
     }
 
 
 @app.get("/api/scout")
-def get_scout(uid: str = Depends(current_uid)) -> dict:
-    return _scout_response(db.get_scout_state(uid))
+def get_scout(medium: Medium = Medium.show, uid: str = Depends(current_uid)) -> dict:
+    return _scout_response(db.get_scout_state(uid), medium.value)
 
 
 @app.post("/api/scout", status_code=202)
-def scout(uid: str = Depends(current_uid)) -> dict:
+def scout(medium: Medium = Medium.show, uid: str = Depends(current_uid)) -> dict:
     from .scorer import scout_is_running
 
     if scout_is_running(db.get_scout_state(uid)):
-        raise HTTPException(409, "A season scout is already running")
+        raise HTTPException(409, "A scout is already running")
     try:
-        _invoke_scorer({"uid": uid, "mode": "scout"})
+        _invoke_scorer({"uid": uid, "mode": "scout", "medium": medium.value})
     except Exception:
         log.exception("scout invoke failed")
-        raise HTTPException(502, "Could not start the season scout")
+        raise HTTPException(502, "Could not start the scout")
     return {"status": "started"}
 
 

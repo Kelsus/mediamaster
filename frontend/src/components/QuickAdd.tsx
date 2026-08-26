@@ -1,12 +1,14 @@
 import { useState } from 'react'
-import type { ShowType } from '../api/types'
+import type { Medium, ShowType } from '../api/types'
 
 interface Props {
-  onAdd: (name: string, showType: ShowType) => void
+  medium: Medium
+  onAdd: (name: string, showType: ShowType, author?: string) => void
 }
 
-export function QuickAdd({ onAdd }: Props) {
+export function QuickAdd({ medium, onAdd }: Props) {
   const [name, setName] = useState('')
+  const [author, setAuthor] = useState('')
   const [type, setType] = useState<ShowType>(
     () => (localStorage.getItem('mm.lastType') as ShowType) || 'tv',
   )
@@ -14,13 +16,38 @@ export function QuickAdd({ onAdd }: Props) {
   const submit = () => {
     const trimmed = name.trim()
     if (!trimmed) return
-    onAdd(trimmed, type)
+    if (medium === 'book') {
+      onAdd(trimmed, 'book', author.trim() || undefined)
+      setAuthor('')
+    } else {
+      onAdd(trimmed, type)
+    }
     setName('')
   }
 
   const pick = (t: ShowType) => {
     setType(t)
     localStorage.setItem('mm.lastType', t)
+  }
+
+  if (medium === 'book') {
+    return (
+      <div className="quick-add quick-add-book">
+        <input
+          value={name}
+          placeholder="Add something to read…"
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && submit()}
+        />
+        <input
+          className="quick-add-author"
+          value={author}
+          placeholder="author (optional)"
+          onChange={(e) => setAuthor(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && submit()}
+        />
+      </div>
+    )
   }
 
   return (

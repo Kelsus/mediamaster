@@ -28,16 +28,17 @@ def _client() -> httpx.Client:
     )
 
 
-def _board() -> dict:
+def _board(medium: str = "show") -> dict:
     with _client() as c:
-        resp = c.get("/api/board")
+        resp = c.get("/api/board", params={"medium": medium})
         resp.raise_for_status()
         return resp.json()
 
 
 def _brief(show: dict) -> dict:
     out = {k: show[k] for k in ("show_id", "name", "show_type", "status") if k in show}
-    for k in ("service", "source", "rating", "predicted_score", "llm_score", "llm_reason"):
+    for k in ("service", "source", "rating", "predicted_score", "llm_score", "llm_reason",
+              "author", "series", "series_index", "unverified"):
         if show.get(k) is not None:
             out[k] = show[k]
     return out
@@ -70,13 +71,15 @@ def _patch(show_id: str, patch: dict) -> dict:
 
 
 @mcp.tool()
-def list_shows(status: Optional[str] = None) -> Any:
-    """List the board. to_watch comes pre-sorted by predicted preference (best first).
+def list_shows(status: Optional[str] = None, medium: str = "show") -> Any:
+    """List a board. to_watch comes pre-sorted by predicted preference (best first).
 
     Args:
         status: optionally limit to one column: to_watch | watching | done | poubelle
+        medium: "show" (default) for the tv/movie board, "book" for the books board
+                (whose columns read To Read / Reading in the UI)
     """
-    board = _board()
+    board = _board(medium)
     if status:
         if status not in VALID_STATUSES:
             raise ValueError(f"status must be one of {VALID_STATUSES}")
@@ -85,9 +88,14 @@ def list_shows(status: Optional[str] = None) -> Any:
 
 
 @mcp.tool()
-def search_shows(query: str) -> Any:
-    """Find shows by (partial, case-insensitive) name across all columns."""
-    board = _board()
+def search_shows(query: str, medium: str = "show") -> Any:
+    """Find shows/books by (partial, case-insensitive) name across all columns.
+
+    Args:
+        query: name fragment
+        medium: "show" (default) or "book"
+    """
+    board = _board(medium)
     needle = query.strip().casefold()
     hits = [
         _brief(s)
@@ -101,19 +109,25 @@ def search_shows(query: str) -> Any:
 @mcp.tool()
 def add_show(
     name: str,
-    show_type: Literal["tv", "movie"],
+    show_type: Literal["tv", "movie", "book"],
     service: Optional[str] = None,
     source: Optional[str] = None,
     status: str = "to_watch",
+    author: Optional[str] = None,
+    series: Optional[str] = None,
+    series_index: Optional[float] = None,
 ) -> Any:
-    """Add a show or movie to the board.
+    """Add a show, movie, or book to a board.
 
     Args:
-        name: title of the show/movie
-        show_type: tv or movie
-        service: streaming service it's on (optional)
+        name: title of the show/movie/book
+        show_type: tv, movie, or book (book cards land on the books board)
+        service: streaming service it's on (optional; shows only)
         source: who or what recommended it (optional)
-        status: which column to add it to (default to_watch)
+        status: which column to add it to (default to_watch, which is To Read for books)
+        author: book author (books only, optional)
+        series: book series name (books only, optional)
+        series_index: position in the series, e.g. 3 or 3.5 (books only, optional)
     """
     if status not in VALID_STATUSES:
         raise ValueError(f"status must be one of {VALID_STATUSES}")
@@ -121,6 +135,10 @@ def add_show(
         resp = c.post(
             "/api/shows",
             json={
+                "medium": "book" if show_type == "book" else "show",
+                "author": author,
+                "series": series,
+                "series_index": series_index,
                 "name": name,
                 "show_type": show_type,
                 "service": service,
@@ -219,24 +237,31 @@ def delete_show(show: str, confirm: bool = False) -> Any:
 
 
 @mcp.tool()
-def get_taste_profile() -> Any:
-    """Read Claude's taste profile of the owner, its status, and last scoring run."""
+def get_taste_profile(medium: str = "show") -> Any:
+    """Read Claude's taste profile of the owner, its status, and last scoring run.
+
+    Args:
+        medium: "show" (default) or "book" for the reading-taste profile
+    """
     with _client() as c:
-        resp = c.get("/api/taste")
+        resp = c.get("/api/taste", params={"medium": medium})
         resp.raise_for_status()
         return resp.json()
 
 
 @mcp.tool()
-def rescore_board() -> Any:
-    """Kick off a full taste re-profiling + re-scoring of the To Watch column.
+def rescore_board(medium: str = "show") -> Any:
+    """Kick off a full taste re-profiling + re-scoring of a board's queue.
 
-    Runs Claude Opus 5 over the owner's entire rating history (~$1-2, takes a
+    Runs Claude Opus 5 over the owner's rating history (~$1-2, takes a
     couple of minutes, runs in the background). Check get_taste_profile for
     completion status.
+
+    Args:
+        medium: "show" (default) re-scores To Watch; "book" re-scores To Read
     """
     with _client() as c:
-        resp = c.post("/api/rescore")
+        resp = c.post("/api/rescore", params={"medium": medium})
         if resp.status_code == 409:
             return "A re-score is already running — check get_taste_profile for status."
         resp.raise_for_status()
@@ -244,19 +269,22 @@ def rescore_board() -> Any:
 
 
 @mcp.tool()
-def scout_seasons() -> Any:
-    """Scan finished-and-liked tv shows for newly released seasons and add the
-    missing "Season N" cards to To Watch.
+def scout_seasons(medium: str = "show") -> Any:
+    """Scan for newly released next installments and queue them.
 
-    Uses web search for recent releases (~$2-4 for a full sweep, a few minutes,
-    runs in the background). Call again later to see last_run results, which
-    include the list of cards it created.
+    medium="show" (default): finished-and-liked tv shows -> missing "Season N"
+    cards into To Watch. medium="book": book series you're current on -> the
+    real next book into To Read.
+
+    Uses web search for recent releases (a few $ for a full sweep, a few
+    minutes, runs in the background). Call again later to see last_run results,
+    which include the list of cards it created.
     """
     with _client() as c:
-        state = c.get("/api/scout").json()
+        state = c.get("/api/scout", params={"medium": medium}).json()
         if state.get("scout_status") == "running":
             return {"status": "already_running", "last_run": state.get("last_run")}
-        resp = c.post("/api/scout")
+        resp = c.post("/api/scout", params={"medium": medium})
         if resp.status_code == 409:
             return {"status": "already_running", "last_run": state.get("last_run")}
         resp.raise_for_status()

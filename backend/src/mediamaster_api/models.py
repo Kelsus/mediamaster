@@ -5,9 +5,15 @@ from typing import Optional
 from pydantic import BaseModel, Field, field_validator
 
 
+class Medium(str, Enum):
+    show = "show"
+    book = "book"
+
+
 class ShowType(str, Enum):
     tv = "tv"
     movie = "movie"
+    book = "book"
 
 
 class Status(str, Enum):
@@ -24,13 +30,18 @@ def now_iso() -> str:
 class ShowCreate(BaseModel):
     name: str = Field(min_length=1, max_length=300)
     show_type: ShowType
+    medium: Medium = Medium.show
+    author: Optional[str] = Field(default=None, max_length=200)
+    series: Optional[str] = Field(default=None, max_length=200)
+    series_index: Optional[float] = Field(default=None, ge=0, le=200)
+    unverified: bool = False
     service: Optional[str] = Field(default=None, max_length=100)
     source: Optional[str] = Field(default=None, max_length=200)
     status: Status = Status.to_watch
     rating: Optional[int] = Field(default=None, ge=1, le=3)
     created_at: Optional[str] = None  # importer may backdate
 
-    @field_validator("name", "service", "source")
+    @field_validator("name", "service", "source", "author", "series")
     @classmethod
     def strip_text(cls, v: Optional[str]) -> Optional[str]:
         if v is None:
@@ -42,14 +53,18 @@ class ShowCreate(BaseModel):
 class ShowPatch(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=300)
     show_type: Optional[ShowType] = None
-    # service/source are clearable: distinguish "absent" from explicit null via
-    # model_fields_set in the route
+    # service/source/author/series are clearable: distinguish "absent" from
+    # explicit null via model_fields_set in the route
+    author: Optional[str] = Field(default=None, max_length=200)
+    series: Optional[str] = Field(default=None, max_length=200)
+    series_index: Optional[float] = Field(default=None, ge=0, le=200)
+    unverified: Optional[bool] = None  # clearing the triage flag = claiming the book
     service: Optional[str] = Field(default=None, max_length=100)
     source: Optional[str] = Field(default=None, max_length=200)
     status: Optional[Status] = None
     rating: Optional[int] = Field(default=None, ge=1, le=3)
 
-    @field_validator("name", "service", "source")
+    @field_validator("name", "service", "source", "author", "series")
     @classmethod
     def strip_text(cls, v: Optional[str]) -> Optional[str]:
         if v is None:
@@ -62,6 +77,12 @@ class Show(BaseModel):
     show_id: str
     name: str
     show_type: ShowType
+    medium: Medium = Medium.show
+    # book-only fields
+    author: Optional[str] = None
+    series: Optional[str] = None
+    series_index: Optional[float] = None
+    unverified: bool = False  # imported from the shared account, ownership unconfirmed
     service: Optional[str] = None
     source: Optional[str] = None
     status: Status

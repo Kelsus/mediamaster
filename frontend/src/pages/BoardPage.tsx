@@ -9,9 +9,9 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from '@dnd-kit/core'
-import { Link } from 'react-router-dom'
+import { Link, NavLink } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import type { Show, Status } from '../api/types'
+import type { Medium, Show, Status } from '../api/types'
 import { getAccessToken, lastLoginMethod, signOut } from '../api/client'
 import { enrollPasskey, listPasskeys } from '../api/cognito'
 import { useBoard, useShowMutations } from '../hooks/useBoard'
@@ -34,10 +34,11 @@ class CardKeyboardSensor extends KeyboardSensor {
   ]
 }
 
-export function BoardPage() {
-  const { data, isLoading, error } = useBoard()
-  const { addShow, patchShow, deleteShow } = useShowMutations()
+export function BoardPage({ medium }: { medium: Medium }) {
+  const { data, isLoading, error } = useBoard(medium)
+  const { addShow, patchShow, deleteShow } = useShowMutations(medium)
   const [active, setActive] = useState<Show | null>(null)
+  const [unverifiedOnly, setUnverifiedOnly] = useState(false)
   const [nudgeState, setNudgeState] = useState<'idle' | 'busy' | 'done' | 'dismissed' | 'error'>(
     () => (localStorage.getItem('mm.enrollNudgeDismissed') ? 'dismissed' : 'idle'),
   )
@@ -88,7 +89,15 @@ export function BoardPage() {
   if (isLoading) return <div className="board-status">loading the archive…</div>
   if (error) return <div className="board-status board-error">could not load the board: {String(error)}</div>
 
-  const columns = data!.columns
+  const board = data!
+  const columns = unverifiedOnly
+    ? (Object.fromEntries(
+        Object.entries(board.columns).map(([k, v]) => [k, v.filter((s) => s.unverified)]),
+      ) as typeof board.columns)
+    : board.columns
+  const unverifiedCount = Object.values(board.columns)
+    .flat()
+    .filter((s) => s.unverified).length
 
   return (
     <div className="board-page">
@@ -97,6 +106,22 @@ export function BoardPage() {
           Media<span>master</span>
         </h1>
         <nav>
+          <NavLink to="/" end className={({ isActive }) => (isActive ? 'nav-active' : '')}>
+            Shows
+          </NavLink>
+          <NavLink to="/books" className={({ isActive }) => (isActive ? 'nav-active' : '')}>
+            Books
+          </NavLink>
+          {unverifiedCount > 0 && (
+            <button
+              type="button"
+              className={`link-button ${unverifiedOnly ? 'nav-active' : ''}`}
+              title="Imported from the shared Audible account — confirm or delete"
+              onClick={() => setUnverifiedOnly((v) => !v)}
+            >
+              {unverifiedCount} unverified
+            </button>
+          )}
           <Link to="/settings">Settings</Link>
           <button type="button" className="link-button" onClick={signOut}>
             Sign out
@@ -145,12 +170,18 @@ export function BoardPage() {
             <Column
               key={status}
               status={status}
+              medium={medium}
               shows={columns[status]}
               onPatch={(showId, patch) => patchShow.mutate({ showId, patch })}
               onDelete={(showId) => deleteShow.mutate({ showId })}
             >
               {status === 'to_watch' && (
-                <QuickAdd onAdd={(name, show_type) => addShow.mutate({ name, show_type })} />
+                <QuickAdd
+                  medium={medium}
+                  onAdd={(name, show_type, author) =>
+                    addShow.mutate({ name, show_type, author })
+                  }
+                />
               )}
             </Column>
           ))}

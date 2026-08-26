@@ -194,7 +194,7 @@ def test_single_scout_never_touches_the_full_sweep_lock(monkeypatch):
 
     scorer.run_scout("uid", franchise="Severance")
     assert all("scout_status" not in w and "started_at" not in w for w in state_writes)
-    assert any("last_single_run" in w for w in state_writes)
+    assert any("last_single_run_show" in w for w in state_writes)
 
 
 def test_scout_skips_when_next_season_already_on_board(monkeypatch):

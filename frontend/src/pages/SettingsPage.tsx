@@ -3,22 +3,39 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { api, getAccessToken } from '../api/client'
 import { enrollPasskey, listPasskeys } from '../api/cognito'
-import type { ApiToken, ScoutState, TasteProfile } from '../api/types'
+import type { ApiToken, Medium, ScoutState, TasteProfile } from '../api/types'
 
-function ScoutSection() {
+const SCOUT_COPY: Record<Medium, { title: string; blurb: string; cta: string; ctaBusy: string }> = {
+  show: {
+    title: 'Season Scout',
+    blurb:
+      'Checks which shows you finished (and liked) have a new season out — using web search for anything recent — and drops the missing "Season N" cards into To Watch. Runs automatically on the 1st of each month, when you rate a season 2★ or better, or on demand here.',
+    cta: 'Scout for new seasons',
+    ctaBusy: 'Scouting… (takes a few minutes)',
+  },
+  book: {
+    title: 'Series Scout',
+    blurb:
+      'Checks which book series you\u2019re current on have a next entry published — using web search for recent releases — and queues the real next book in To Read. Runs monthly, when you rate a series book 2★ or better, or on demand here.',
+    cta: 'Scout for next books',
+    ctaBusy: 'Scouting… (takes a few minutes)',
+  },
+}
+
+function ScoutSection({ medium }: { medium: Medium }) {
   const qc = useQueryClient()
 
   const scout = useQuery<ScoutState>({
-    queryKey: ['scout'],
-    queryFn: () => api<ScoutState>('/api/scout'),
+    queryKey: ['scout', medium],
+    queryFn: () => api<ScoutState>(`/api/scout?medium=${medium}`),
     refetchInterval: (query) => (query.state.data?.scout_status === 'running' ? 5000 : false),
   })
 
   const running = scout.data?.scout_status === 'running'
 
   const start = useMutation({
-    mutationFn: () => api('/api/scout', { method: 'POST' }),
-    onSettled: () => qc.invalidateQueries({ queryKey: ['scout'] }),
+    mutationFn: () => api(`/api/scout?medium=${medium}`, { method: 'POST' }),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['scout', medium] }),
   })
 
   const status = scout.data?.scout_status
@@ -29,14 +46,11 @@ function ScoutSection() {
   const s = scout.data
   const created = s?.last_run?.created ?? []
 
+  const copy = SCOUT_COPY[medium]
   return (
     <section>
-      <h2>Season Scout</h2>
-      <p>
-        Checks which shows you finished (and liked) have a new season out — using web search for
-        anything recent — and drops the missing "Season N" cards into To Watch. Runs automatically
-        on the 1st of each month, when you rate a season 2★ or better, or on demand here.
-      </p>
+      <h2>{copy.title}</h2>
+      <p>{copy.blurb}</p>
       <div className="taste-actions">
         <button
           type="button"
@@ -44,12 +58,12 @@ function ScoutSection() {
           disabled={running || start.isPending}
           onClick={() => start.mutate()}
         >
-          {running ? 'Scouting… (takes a few minutes)' : 'Scout for new seasons'}
+          {running ? copy.ctaBusy : copy.cta}
         </button>
         {s?.last_run && (
           <span className="settings-msg">
             Last run {new Date(s.last_run.finished_at).toLocaleString()}: checked{' '}
-            {s.last_run.checked} shows, added {created.length} (~${s.last_run.est_cost_usd})
+            {s.last_run.checked}, added {created.length} (~${s.last_run.est_cost_usd})
           </span>
         )}
       </div>
@@ -63,29 +77,32 @@ function ScoutSection() {
   )
 }
 
-function TasteSection() {
+function TasteSection({ medium }: { medium: Medium }) {
   const qc = useQueryClient()
   const [notes, setNotes] = useState<string | null>(null) // null = not yet edited
   const [showProfile, setShowProfile] = useState(false)
 
   const taste = useQuery<TasteProfile>({
-    queryKey: ['taste'],
-    queryFn: () => api<TasteProfile>('/api/taste'),
+    queryKey: ['taste', medium],
+    queryFn: () => api<TasteProfile>(`/api/taste?medium=${medium}`),
     refetchInterval: (query) => (query.state.data?.scoring_status === 'running' ? 5000 : false),
   })
 
   const running = taste.data?.scoring_status === 'running'
 
   const rescore = useMutation({
-    mutationFn: () => api('/api/rescore', { method: 'POST' }),
-    onSettled: () => qc.invalidateQueries({ queryKey: ['taste'] }),
+    mutationFn: () => api(`/api/rescore?medium=${medium}`, { method: 'POST' }),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['taste', medium] }),
   })
 
   const saveNotes = useMutation({
     mutationFn: (n: string) =>
-      api<TasteProfile>('/api/taste/notes', { method: 'PUT', body: JSON.stringify({ notes: n }) }),
+      api<TasteProfile>(`/api/taste/notes?medium=${medium}`, {
+        method: 'PUT',
+        body: JSON.stringify({ notes: n }),
+      }),
     onSuccess: (data) => {
-      qc.setQueryData(['taste'], data)
+      qc.setQueryData(['taste', medium], data)
       setNotes(null)
     },
   })
@@ -100,10 +117,11 @@ function TasteSection() {
 
   return (
     <section>
-      <h2>Taste profile</h2>
+      <h2>{medium === 'book' ? 'Reading-taste profile' : 'Taste profile'}</h2>
       <p>
-        Claude Opus 5 reads your entire rating history, writes a taste profile, and scores every
-        show in To Watch (0–100). Re-scoring is manual and costs roughly $1–2 per run.
+        {medium === 'book'
+          ? 'Claude Opus 5 reads your rating history, writes a reading-taste profile, and scores every book in To Read (0–100). Re-scoring is manual.'
+          : 'Claude Opus 5 reads your entire rating history, writes a taste profile, and scores every show in To Watch (0–100). Re-scoring is manual and costs roughly $1–2 per run.'}
       </p>
 
       <div className="taste-actions">
@@ -118,7 +136,7 @@ function TasteSection() {
         {t?.last_run && (
           <span className="settings-msg">
             Last run {new Date(t.last_run.finished_at).toLocaleString()}: scored{' '}
-            {t.last_run.scored}/{t.last_run.queue_size} shows (~${t.last_run.est_cost_usd})
+            {t.last_run.scored}/{t.last_run.queue_size} (~${t.last_run.est_cost_usd})
           </span>
         )}
       </div>
@@ -159,6 +177,7 @@ function TasteSection() {
 
 export function SettingsPage() {
   const qc = useQueryClient()
+  const [medium, setMedium] = useState<Medium>('show')
   const [passkeyMsg, setPasskeyMsg] = useState<string | null>(null)
   const [label, setLabel] = useState('')
   const [freshToken, setFreshToken] = useState<string | null>(null)
@@ -213,8 +232,28 @@ export function SettingsPage() {
       </header>
 
       <main className="settings">
-        <TasteSection />
-        <ScoutSection />
+        <div className="medium-tabs" role="tablist" aria-label="Shows or Books">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={medium === 'show'}
+            className={medium === 'show' ? 'active' : ''}
+            onClick={() => setMedium('show')}
+          >
+            Shows
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={medium === 'book'}
+            className={medium === 'book' ? 'active' : ''}
+            onClick={() => setMedium('book')}
+          >
+            Books
+          </button>
+        </div>
+        <TasteSection key={`taste-${medium}`} medium={medium} />
+        <ScoutSection key={`scout-${medium}`} medium={medium} />
 
         <section>
           <h2>Passkeys</h2>

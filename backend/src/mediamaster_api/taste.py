@@ -56,6 +56,16 @@ def ratings_hash(shows: list[Show]) -> str:
 
 
 def _show_line(show: Show) -> str:
+    if show.medium.value == "book":
+        parts = [show.name]
+        if show.author:
+            parts.append(f" by {show.author}")
+        if show.series:
+            idx = f" #{show.series_index:g}" if show.series_index else ""
+            parts.append(f" ({show.series}{idx})")
+        if show.source:
+            parts.append(f" — recommended by {show.source}")
+        return "".join(parts)
     parts = [f"{show.name} ({show.show_type.value}"]
     if show.service:
         parts.append(f", on {show.service}")
@@ -64,7 +74,7 @@ def _show_line(show: Show) -> str:
     return "".join(parts) + ")"
 
 
-def _history_document(shows: list[Show]) -> str:
+def _history_document(shows: list[Show], medium: str = "show") -> str:
     groups: dict[str, list[str]] = {"3": [], "2": [], "1": [], "poubelle": []}
     for s in shows:
         if s.status == Status.poubelle:
@@ -78,9 +88,10 @@ def _history_document(shows: list[Show]) -> str:
         ("Just fine (1 star)", groups["1"]),
         ("Strongly disliked / abandoned (La Poubelle)", groups["poubelle"]),
     ]
+    noun = "books" if medium == "book" else "shows"
     out = []
     for title, lines in sections:
-        out.append(f"## {title} — {len(lines)} shows")
+        out.append(f"## {title} — {len(lines)} {noun}")
         if lines:
             out.extend(f"- {line}" for line in lines)
         else:
@@ -110,16 +121,42 @@ Write 600-900 words of tight, declarative markdown. No hedging filler. State \
 patterns as hypotheses with confidence when evidence is thin."""
 
 
-def generate_profile(anthropic_client, shows: list[Show], notes: Optional[str]) -> tuple[str, dict]:
+PROFILE_SYSTEM_BOOK = """\
+You are a literary taste analyst. You will receive one person's reading \
+history with their ratings, and optionally their own notes about their taste. \
+Using your knowledge of these actual books — their genres, themes, prose \
+style, pacing, structure, authors, and reception — write a reading-taste \
+profile for this person.
+
+The profile will be used as context by a scoring system that ranks their \
+to-read list, so write it to be maximally useful for predicting whether they \
+will love a given book. Include:
+
+- Genres, themes, and settings they gravitate to, with the evidence
+- What separates their 3-star favorites from their merely-good 2-star picks
+- Patterns in what they dislike or abandon (anti-preferences matter as much)
+- Prose and structure preferences (literary vs propulsive, hard vs soft SF,
+  standalone vs series, fiction vs nonfiction, audio-friendliness — this
+  history is largely audiobooks)
+- Series loyalty: how far they follow series, and which they drop
+- Author affinities, and reliability of recurring recommendation sources
+- Anything their own notes emphasize
+
+Write 600-900 words of tight, declarative markdown. No hedging filler. State \
+patterns as hypotheses with confidence when evidence is thin."""
+
+
+def generate_profile(anthropic_client, shows: list[Show], notes: Optional[str],
+                     medium: str = "show") -> tuple[str, dict]:
     """Stage A. Returns (profile_markdown, usage_dict)."""
-    user_content = _history_document(shows)
+    user_content = _history_document(shows, medium)
     if notes:
         user_content += f"\n\n## The person's own notes about their taste\n{notes}"
 
     response = anthropic_client.messages.create(
         model=MODEL,
         max_tokens=16000,
-        system=PROFILE_SYSTEM,
+        system=PROFILE_SYSTEM_BOOK if medium == "book" else PROFILE_SYSTEM,
         messages=[{"role": "user", "content": user_content}],
     )
     if response.stop_reason == "refusal":
@@ -154,18 +191,57 @@ decisive factor (e.g. "slow-burn crime saga, same vein as your 3-star picks").
 """
 
 
-def score_batch(anthropic_client, profile: str, shows: list[Show]) -> tuple[list[ShowScore], dict]:
+SCORING_SYSTEM_BOOK = """\
+You are ranking a personal to-read list. Below is the owner's reading-taste \
+profile, distilled from their complete rating history.
+
+For each candidate book you receive, output a score from 0 to 100: the \
+likelihood this person will LOVE it (a 3-star "absolute favorite" is ~90+, a \
+solid 2-star fit is ~60-75, "they'd find it just fine" is ~40-55, likely \
+abandonment is below 25). Use everything you know about the actual book — \
+plot, themes, prose, pacing, structure, reception — combined with the \
+profile. If you don't recognize a title, score from metadata alone and stay \
+near 50.
+
+If a candidate is a later entry in a series whose earlier books appear in the \
+profile's rating history, the person's OWN verdict on those earlier books is \
+the strongest evidence there is — weight it above general reception. The next \
+book of a 3-star series should rank near the top of the list.
+
+For each book give a concrete reason of 12 words or fewer that cites the \
+decisive factor (e.g. "hard-SF ideas cascade, same vein as your 3-star picks").
+
+# Reading-taste profile
+
+"""
+
+
+def score_batch(anthropic_client, profile: str, shows: list[Show],
+                medium: str = "show") -> tuple[list[ShowScore], dict]:
     """Stage B for one batch. Returns (scores, usage_dict)."""
-    candidates = [
-        {
-            "show_id": s.show_id,
-            "name": s.name,
-            "type": s.show_type.value,
-            "service": s.service,
-            "recommended_by": s.source,
-        }
-        for s in shows
-    ]
+    if medium == "book":
+        candidates = [
+            {
+                "show_id": s.show_id,
+                "title": s.name,
+                "author": s.author,
+                "series": s.series,
+                "series_index": s.series_index,
+                "recommended_by": s.source,
+            }
+            for s in shows
+        ]
+    else:
+        candidates = [
+            {
+                "show_id": s.show_id,
+                "name": s.name,
+                "type": s.show_type.value,
+                "service": s.service,
+                "recommended_by": s.source,
+            }
+            for s in shows
+        ]
     response = anthropic_client.messages.parse(
         model=MODEL,
         max_tokens=16000,
@@ -173,7 +249,7 @@ def score_batch(anthropic_client, profile: str, shows: list[Show]) -> tuple[list
         system=[
             {
                 "type": "text",
-                "text": SCORING_SYSTEM + profile,
+                "text": (SCORING_SYSTEM_BOOK if medium == "book" else SCORING_SYSTEM) + profile,
                 "cache_control": {"type": "ephemeral"},
             }
         ],

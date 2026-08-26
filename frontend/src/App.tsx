@@ -21,9 +21,10 @@ export function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/" element={<BoardPage />} />
+        <Route path="/" element={<BoardPage medium="show" />} />
+        <Route path="/books" element={<BoardPage medium="book" />} />
         <Route path="/settings" element={<SettingsPage />} />
-        <Route path="*" element={<BoardPage />} />
+        <Route path="*" element={<BoardPage medium="show" />} />
       </Routes>
     </BrowserRouter>
   )

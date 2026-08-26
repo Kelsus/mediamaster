@@ -124,7 +124,7 @@ def test_taste_routes_and_rescore_guard(client, monkeypatch):
     invocations = []
     monkeypatch.setattr("mediamaster_api.main._invoke_scorer", lambda p: invocations.append(p))
     assert client.post("/api/rescore").status_code == 202
-    assert invocations == [{"uid": "test-user", "mode": "full"}]
+    assert invocations == [{"uid": "test-user", "mode": "full", "medium": "show"}]
 
     # simulate a fresh running lock -> 409
     from mediamaster_api.models import now_iso

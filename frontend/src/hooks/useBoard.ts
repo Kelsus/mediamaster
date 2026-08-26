@@ -1,17 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
-import type { Board, Show, ShowPatch, ShowType, Status } from '../api/types'
-
-const KEY = ['board']
+import type { Board, Medium, Show, ShowPatch, ShowType, Status } from '../api/types'
 
 const emptyBoard = (): Board => ({
   columns: { to_watch: [], watching: [], done: [], poubelle: [] },
 })
 
-export function useBoard() {
+export function useBoard(medium: Medium) {
   return useQuery<Board>({
-    queryKey: KEY,
-    queryFn: () => api<Board>('/api/board'),
+    queryKey: ['board', medium],
+    queryFn: () => api<Board>(`/api/board?medium=${medium}`),
     staleTime: 30_000,
   })
 }
@@ -56,8 +54,9 @@ function sanitize(patch: ShowPatch): Partial<Show> {
   return out
 }
 
-export function useShowMutations() {
+export function useShowMutations(medium: Medium) {
   const qc = useQueryClient()
+  const KEY = ['board', medium]
 
   const withOptimistic = <TArgs,>(
     mutationFn: (args: TArgs) => Promise<unknown>,
@@ -78,13 +77,15 @@ export function useShowMutations() {
     })
 
   const addShow = withOptimistic(
-    (args: { name: string; show_type: ShowType; service?: string; source?: string }) =>
-      api('/api/shows', { method: 'POST', body: JSON.stringify(args) }),
+    (args: { name: string; show_type: ShowType; author?: string; service?: string; source?: string }) =>
+      api('/api/shows', { method: 'POST', body: JSON.stringify({ ...args, medium }) }),
     (board, args) => {
       const temp: Show = {
         show_id: `temp-${Date.now()}`,
         name: args.name,
         show_type: args.show_type,
+        medium,
+        author: args.author,
         service: args.service,
         source: args.source,
         status: 'to_watch',

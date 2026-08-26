@@ -834,3 +834,59 @@ input {
     scroll-snap-align: start;
   }
 }
+
+/* --- Books board --- */
+.masthead nav .nav-active {
+  color: var(--red);
+  font-weight: 700;
+}
+
+.series-chip {
+  font-style: italic;
+  opacity: 0.85;
+}
+
+.unverified-chip {
+  background: var(--gold, #b8860b);
+  color: var(--card);
+  font-weight: 700;
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 0.1rem 0.35rem;
+  cursor: pointer;
+}
+
+.unverified-chip:hover {
+  filter: brightness(1.15);
+}
+
+.quick-add-book {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.quick-add-book .quick-add-author {
+  flex: 0 0 38%;
+}
+
+.medium-tabs {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--ink);
+  width: fit-content;
+  margin-bottom: 0.4rem;
+}
+
+.medium-tabs button {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  padding: 0.3rem 0.9rem;
+}
+
+.medium-tabs button.active {
+  background: var(--ink);
+  color: var(--paper);
+}

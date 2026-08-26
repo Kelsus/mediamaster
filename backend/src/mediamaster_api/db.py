@@ -1,6 +1,7 @@
 import hashlib
 import os
 import secrets
+from decimal import Decimal
 from typing import Any, Optional
 
 import boto3
@@ -40,6 +41,11 @@ def _item_to_show(item: dict) -> Show:
         updated_at=item["updated_at"],
         status_changed_at=item["status_changed_at"],
         rated_at=item.get("rated_at"),
+        medium=item.get("medium", "show"),
+        author=item.get("author"),
+        series=item.get("series"),
+        series_index=float(item["series_index"]) if item.get("series_index") is not None else None,
+        unverified=bool(item.get("unverified", False)),
         llm_score=int(item["llm_score"]) if item.get("llm_score") is not None else None,
         llm_reason=item.get("llm_reason"),
         scored_at=item.get("scored_at"),
@@ -72,11 +78,20 @@ def create_show(uid: str, payload: ShowCreate) -> Show:
         "show_id": show_id,
         "name": payload.name,
         "show_type": payload.show_type.value,
+        "medium": payload.medium.value,
         "status": payload.status.value,
         "created_at": created_at,
         "updated_at": now,
         "status_changed_at": now,
     }
+    if payload.author:
+        item["author"] = payload.author
+    if payload.series:
+        item["series"] = payload.series
+    if payload.series_index is not None:
+        item["series_index"] = Decimal(str(payload.series_index))
+    if payload.unverified:
+        item["unverified"] = True
     if payload.service:
         item["service"] = payload.service
     if payload.source:
@@ -98,7 +113,8 @@ def patch_show(uid: str, show: Show, patch: ShowPatch, fields_set: set[str]) -> 
     now = now_iso()
     item = show.model_dump(mode="json", exclude={"predicted_score", "score_breakdown"})
 
-    for field in ("name", "show_type", "service", "source"):
+    for field in ("name", "show_type", "service", "source",
+                  "author", "series", "series_index", "unverified"):
         if field in fields_set:
             value = getattr(patch, field)
             item[field] = value.value if hasattr(value, "value") else value
@@ -120,6 +136,8 @@ def patch_show(uid: str, show: Show, patch: ShowPatch, fields_set: set[str]) -> 
         "SK": _show_sk(show.show_id),
         **{k: v for k, v in item.items() if v is not None},
     }
+    if ddb_item.get("series_index") is not None:  # DynamoDB rejects float
+        ddb_item["series_index"] = Decimal(str(ddb_item["series_index"]))
     table().put_item(Item=ddb_item)
     return _item_to_show(item)
 
@@ -144,14 +162,19 @@ def write_show_score(uid: str, show_id: str, score: int, reason: str,
 PROFILE_SK = "TASTE#PROFILE"
 
 
-def get_profile(uid: str) -> Optional[dict]:
-    resp = table().get_item(Key={"PK": _user_pk(uid), "SK": PROFILE_SK})
+def _profile_sk(medium: str) -> str:
+    # Shows keep the original SK so pre-books deployments' data stays live.
+    return PROFILE_SK if medium == "show" else f"{PROFILE_SK}#{medium}"
+
+
+def get_profile(uid: str, medium: str = "show") -> Optional[dict]:
+    resp = table().get_item(Key={"PK": _user_pk(uid), "SK": _profile_sk(medium)})
     return resp.get("Item")
 
 
-def put_profile(uid: str, updates: dict) -> None:
-    """Merge updates into the profile item (created on first write)."""
-    existing = get_profile(uid) or {"PK": _user_pk(uid), "SK": PROFILE_SK}
+def put_profile(uid: str, updates: dict, medium: str = "show") -> None:
+    """Merge updates into the medium's profile item (created on first write)."""
+    existing = get_profile(uid, medium) or {"PK": _user_pk(uid), "SK": _profile_sk(medium)}
     existing.update(updates)
     table().put_item(Item={k: v for k, v in existing.items() if v is not None})
 

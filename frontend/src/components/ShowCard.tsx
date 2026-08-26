@@ -34,22 +34,56 @@ export const ShowCard = memo(function ShowCard({ show, onPatch, onDelete }: Prop
       </header>
 
       <div className="card-meta">
-        <button
-          type="button"
-          className={`type-chip type-${show.show_type}`}
-          title="Toggle tv / movie"
-          onClick={() => onPatch({ show_type: show.show_type === 'tv' ? 'movie' : 'tv' })}
-          onPointerDown={(e) => e.stopPropagation()}
-        >
-          {show.show_type === 'tv' ? 'TV' : 'Film'}
-        </button>
-        <EditableText
-          value={show.service ?? ''}
-          placeholder="service"
-          className="meta-chip"
-          allowEmpty
-          onCommit={(v) => onPatch({ service: v || null })}
-        />
+        {show.medium === 'book' ? (
+          <>
+            <EditableText
+              value={show.author ?? ''}
+              placeholder="author"
+              className="meta-chip"
+              allowEmpty
+              onCommit={(v) => onPatch({ author: v || null })}
+            />
+            {show.series && (
+              <span
+                className="meta-chip series-chip"
+                title={`Part of the ${show.series} series`}
+              >
+                {show.series}
+                {show.series_index ? ` #${show.series_index}` : ''}
+              </span>
+            )}
+            {show.unverified && (
+              <button
+                type="button"
+                className="meta-chip unverified-chip"
+                title="Imported from the shared Audible account — click to claim as yours (or delete it)"
+                onClick={() => onPatch({ unverified: false })}
+                onPointerDown={(e) => e.stopPropagation()}
+              >
+                yours?
+              </button>
+            )}
+          </>
+        ) : (
+          <button
+            type="button"
+            className={`type-chip type-${show.show_type}`}
+            title="Toggle tv / movie"
+            onClick={() => onPatch({ show_type: show.show_type === 'tv' ? 'movie' : 'tv' })}
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            {show.show_type === 'tv' ? 'TV' : 'Film'}
+          </button>
+        )}
+        {show.medium !== 'book' && (
+          <EditableText
+            value={show.service ?? ''}
+            placeholder="service"
+            className="meta-chip"
+            allowEmpty
+            onCommit={(v) => onPatch({ service: v || null })}
+          />
+        )}
         <EditableText
           value={show.source ? `via ${show.source}` : ''}
           placeholder="via …"
