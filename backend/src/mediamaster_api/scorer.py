@@ -346,13 +346,13 @@ def run_series_scout(uid: str, series_name: str | None = None) -> dict:
 def run_discover(uid: str, medium: str) -> dict:
     """Find new titles matching the taste profile; pin them atop the queue."""
     state = db.get_scout_state(uid) or {}
-    if state.get("discover_status") == "running" and is_running(
-        {"scoring_status": "running", "started_at": state.get("discover_started_at")}
+    if state.get(f"discover_status_{medium}") == "running" and is_running(
+        {"scoring_status": "running", "started_at": state.get(f"discover_started_at_{medium}")}
     ):
-        log.info("discovery already in progress for %s; skipping", uid)
+        log.info("%s discovery already in progress for %s; skipping", medium, uid)
         return {"skipped": "already running"}
-    db.put_scout_state(uid, {"discover_status": "running",
-                             "discover_started_at": now_iso()})
+    db.put_scout_state(uid, {f"discover_status_{medium}": "running",
+                             f"discover_started_at_{medium}": now_iso()})
     totals = {"input_tokens": 0, "output_tokens": 0,
               "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
     try:
@@ -419,7 +419,7 @@ def run_discover(uid: str, medium: str) -> dict:
         log.info("discovery complete (%s): proposed=%d created=%s searches=%d est_cost=$%.2f",
                  medium, len(candidates), created, searches, est_cost)
         db.put_scout_state(uid, {
-            "discover_status": "idle", "discover_started_at": None,
+            f"discover_status_{medium}": "idle", f"discover_started_at_{medium}": None,
             f"last_discover_{medium}": {
                 "finished_at": now_iso(), "created": created,
                 "web_searches": searches, "est_cost_usd": f"{est_cost:.2f}",
@@ -428,8 +428,9 @@ def run_discover(uid: str, medium: str) -> dict:
         return {"created": created}
     except Exception as e:
         log.exception("discovery run failed")
-        db.put_scout_state(uid, {"discover_status": "idle", "discover_started_at": None,
-                                 "last_discover_error": f"{type(e).__name__}: {e}"})
+        db.put_scout_state(uid, {f"discover_status_{medium}": "idle",
+                                 f"discover_started_at_{medium}": None,
+                                 f"last_discover_error_{medium}": f"{type(e).__name__}: {e}"})
         raise
 
 

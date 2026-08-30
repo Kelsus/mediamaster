@@ -202,9 +202,9 @@ def _scout_response(state: dict | None, medium: str) -> dict:
         "last_single_run": s.get(f"last_single_run_{medium}") or
                            (s.get("last_single_run") if medium == "show" else None),
         "last_error": s.get("last_error"),
-        "discover_status": "running" if s.get("discover_status") == "running" else "idle",
+        "discover_status": "running" if s.get(f"discover_status_{medium}") == "running" else "idle",
         "last_discover": s.get(f"last_discover_{medium}"),
-        "last_discover_error": s.get("last_discover_error"),
+        "last_discover_error": s.get(f"last_discover_error_{medium}"),
     }
 
 
@@ -232,8 +232,9 @@ def discover_new(medium: Medium = Medium.show, uid: str = Depends(current_uid)) 
     from .scorer import is_running
 
     state = db.get_scout_state(uid) or {}
-    if state.get("discover_status") == "running" and is_running(
-        {"scoring_status": "running", "started_at": state.get("discover_started_at")}
+    if state.get(f"discover_status_{medium.value}") == "running" and is_running(
+        {"scoring_status": "running",
+         "started_at": state.get(f"discover_started_at_{medium.value}")}
     ):
         raise HTTPException(409, "A discovery run is already in progress")
     try:

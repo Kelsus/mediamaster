@@ -106,17 +106,17 @@ def test_discover_requires_profile(client, monkeypatch):
     with pytest.raises(RuntimeError, match="taste profile"):
         scorer.run_discover(TEST_UID, "book")
     state = db.get_scout_state(TEST_UID)
-    assert state["discover_status"] == "idle"
-    assert "taste profile" in state["last_discover_error"]
+    assert state["discover_status_book"] == "idle"
+    assert "taste profile" in state["last_discover_error_book"]
 
 
 def test_discover_endpoint_guard(profiled):
-    db.put_scout_state(TEST_UID, {"discover_status": "running",
-                                  "discover_started_at": now_iso()})
+    db.put_scout_state(TEST_UID, {"discover_status_show": "running",
+                                  "discover_started_at_show": now_iso()})
     with patch("mediamaster_api.main._invoke_scorer") as invoke:
         assert profiled.post("/api/discover?medium=show").status_code == 409
         invoke.assert_not_called()
-    db.put_scout_state(TEST_UID, {"discover_status": "idle", "discover_started_at": None})
+    db.put_scout_state(TEST_UID, {"discover_status_show": "idle", "discover_started_at_show": None})
     with patch("mediamaster_api.main._invoke_scorer") as invoke:
         assert profiled.post("/api/discover?medium=book").status_code == 202
         assert invoke.call_args[0][0]["mode"] == "discover"
