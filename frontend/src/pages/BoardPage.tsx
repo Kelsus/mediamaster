@@ -1,17 +1,20 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import {
   DndContext,
   DragOverlay,
   KeyboardSensor,
+  MeasuringStrategy,
   MouseSensor,
   TouchSensor,
   closestCorners,
+  pointerWithin,
+  useDndContext,
   useSensor,
   useSensors,
+  type CollisionDetection,
   type DragEndEvent,
-  type DragStartEvent,
 } from '@dnd-kit/core'
-import { rankAt } from '../lib/rank'
+import { rankAt, rankBetween } from '../lib/rank'
 import { Link, NavLink } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import type { Medium, Show, Status } from '../api/types'
@@ -23,6 +26,33 @@ import { Column } from '../components/Column'
 import { QuickAdd } from '../components/QuickAdd'
 
 const STATUSES: Status[] = ['to_watch', 'watching', 'done', 'poubelle']
+
+// Only the 4 columns are droppable, so "which column is the finger in" is the
+// whole question — answer it literally, falling back to nearest-corner for
+// keyboard drags and pointer positions in the gutters.
+const columnCollision: CollisionDetection = (args) => {
+  const within = pointerWithin(args)
+  return within.length > 0 ? within : closestCorners(args)
+}
+
+// The overlay is the only part of the page that follows the drag, so it is the
+// only component that subscribes to dnd state — BoardPage itself must never
+// re-render on drag start/end (that re-render cascaded into all 500 cards).
+function BoardOverlay() {
+  const { active } = useDndContext()
+  const show = (active?.data.current as { show: Show } | undefined)?.show
+  return (
+    <DragOverlay>
+      {show && (
+        <article className="card card-overlay">
+          <header className="card-head">
+            <span className="card-title">{show.name}</span>
+          </header>
+        </article>
+      )}
+    </DragOverlay>
+  )
+}
 
 // Only start keyboard drags when the card itself is focused — otherwise
 // spaces typed in child edit-in-place inputs would pick the card up.
@@ -57,7 +87,6 @@ export function BoardPage({ medium }: { medium: Medium }) {
   const { data, isLoading, error } = useBoard(medium)
   const { addShow, patchShow, deleteShow, transferShow } = useShowMutations(medium)
   const { startDiscover, discoverRunning, sortByScore, sortPending } = useDiscovery(medium)
-  const [active, setActive] = useState<Show | null>(null)
   const [unverifiedOnly, setUnverifiedOnly] = useState(false)
   const [nudgeState, setNudgeState] = useState<'idle' | 'busy' | 'done' | 'dismissed' | 'error'>(
     () => (localStorage.getItem('mm.enrollNudgeDismissed') ? 'dismissed' : 'idle'),
@@ -99,48 +128,61 @@ export function BoardPage({ medium }: { medium: Medium }) {
     useSensor(CardKeyboardSensor),
   )
 
-  const onDragStart = (e: DragStartEvent) => {
-    setActive((e.active.data.current as { show: Show })?.show ?? null)
-  }
+  const onPatchCard = useCallback(
+    (showId: string, patch: object) => patchShow.mutate({ showId, patch }),
+    [patchShow.mutate],
+  )
+  const onDeleteCard = useCallback(
+    (showId: string) => deleteShow.mutate({ showId }),
+    [deleteShow.mutate],
+  )
+  const onTransferCard = useCallback(
+    (showId: string, toUid: string) => transferShow.mutate({ showId, toUid }),
+    [transferShow.mutate],
+  )
 
   const onDragEnd = (e: DragEndEvent) => {
-    setActive(null)
     const show = (e.active.data.current as { show: Show })?.show
     const overId = e.over?.id as string | undefined
     if (!show || !overId || !data) return
+    if (!(STATUSES as string[]).includes(overId)) return
+    const target = overId as Status
 
-    const cols = data.columns
-    const findContainer = (id: string): Status | undefined => {
-      if ((STATUSES as string[]).includes(id)) return id as Status
-      return STATUSES.find((st) => cols[st].some((c) => c.show_id === id))
+    // Layout is static during drags, so the target column's rendered cards ARE
+    // the drop geometry — even under the unverified filter, where the DOM is a
+    // subset of the column. The slot is wherever the dragged card's center Y
+    // sits, and the new rank goes between the displayed neighbors' ranks.
+    const rect = e.active.rect.current.translated
+    const dropY = rect ? rect.top + rect.height / 2 : Number.NEGATIVE_INFINITY
+    let prevId: string | undefined
+    let nextId: string | undefined
+    for (const el of document.querySelectorAll<HTMLElement>(
+      `.column-${target} .column-cards > .card`,
+    )) {
+      if (el.classList.contains('card-dragging')) continue // the lifted card itself
+      const r = el.getBoundingClientRect()
+      if (dropY < r.top + r.height / 2) {
+        nextId = el.dataset.showId
+        break
+      }
+      prevId = el.dataset.showId
     }
-    const target = findContainer(overId)
-    if (!target) return
-
-    // Layout never mutates mid-drag, so the cache arrays ARE the geometry:
-    // dropping on a card takes its slot; dropping on column chrome goes on top.
-    const targetCards = cols[target].filter((c) => c.show_id !== show.show_id)
-    let insertAt = 0
-    if (overId !== target) {
-      const overIndex = targetCards.findIndex((c) => c.show_id === overId)
-      if (overIndex < 0) return
-      const sameColumn = target === show.status
-      const fromIndex = cols[target].findIndex((c) => c.show_id === show.show_id)
-      const overOriginal = cols[target].findIndex((c) => c.show_id === overId)
-      // Moving down within a column lands AFTER the over card (arrayMove
-      // semantics); everything else lands at the over card's slot.
-      insertAt = sameColumn && fromIndex >= 0 && fromIndex < overOriginal
-        ? overIndex + 1
-        : overIndex
-    }
-    if (target === show.status && cols[target][insertAt]?.show_id === show.show_id) {
+    const byId = new Map(data.columns[target].map((c) => [c.show_id, c]))
+    const prevRank = prevId ? byId.get(prevId)?.rank : undefined
+    const nextRank = nextId ? byId.get(nextId)?.rank : undefined
+    if (
+      target === show.status &&
+      show.rank &&
+      (!prevRank || prevRank < show.rank) &&
+      (!nextRank || show.rank < nextRank)
+    ) {
       return // dropped back onto its own slot
     }
     let rank: string
     try {
-      rank = rankAt(targetCards.map((c) => c.rank), insertAt)
+      rank = rankBetween(prevRank, nextRank)
     } catch {
-      rank = rankAt([targetCards[insertAt - 1]?.rank].filter(Boolean) as string[], 1)
+      rank = rankBetween(prevRank, undefined) // neighbor ranks out of order — land after prev
     }
     const patch: { rank: string; status?: Status } = { rank }
     if (target !== show.status) patch.status = target
@@ -267,12 +309,12 @@ export function BoardPage({ medium }: { medium: Medium }) {
 
       <DndContext
         sensors={sensors}
-        collisionDetection={closestCorners}
+        collisionDetection={columnCollision}
+        // The 4 columns are the only droppables; one measure pass at drag
+        // start covers them (layout is static during drags).
+        measuring={{ droppable: { strategy: MeasuringStrategy.BeforeDragging } }}
         autoScroll={{ threshold: { x: 0.15, y: 0.15 }, acceleration: 8 }}
-        onDragStart={onDragStart}
-        onDragMove={(e) => (window as any).__dbg?.push({ over: String(e.over?.id), x: Math.round(e.delta.x), y: Math.round(e.delta.y) })}
         onDragEnd={onDragEnd}
-        onDragCancel={() => setActive(null)}
       >
         <main className="board">
           {STATUSES.map((status) => (
@@ -281,9 +323,9 @@ export function BoardPage({ medium }: { medium: Medium }) {
               status={status}
               medium={medium}
               shows={columns[status]}
-              onPatch={(showId, patch) => patchShow.mutate({ showId, patch })}
-              onDelete={(showId) => deleteShow.mutate({ showId })}
-              onTransfer={(showId, toUid) => transferShow.mutate({ showId, toUid })}
+              onPatch={onPatchCard}
+              onDelete={onDeleteCard}
+              onTransfer={onTransferCard}
             >
               <QuickAdd
                 medium={medium}
@@ -301,15 +343,7 @@ export function BoardPage({ medium }: { medium: Medium }) {
             </Column>
           ))}
         </main>
-        <DragOverlay>
-          {active && (
-            <article className="card card-overlay">
-              <header className="card-head">
-                <span className="card-title">{active.name}</span>
-              </header>
-            </article>
-          )}
-        </DragOverlay>
+        <BoardOverlay />
       </DndContext>
     </div>
   )

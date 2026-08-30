@@ -18,9 +18,12 @@ function notify() {
   listeners.forEach((fn) => fn())
 }
 
-// Dev-only bypass for the moto mock server (scripts/local_mock.py); the flag
-// check is stripped from production builds.
-const devBypass = (): boolean => import.meta.env.DEV && !!localStorage.getItem('mm.devBypass')
+// Dev-only bypass for the moto mock server (scripts/local_mock.py); stripped
+// from production builds (VITE_ALLOW_MOCK lets a local `vite build` keep it,
+// for testing production-bundle performance against the mock).
+const devBypass = (): boolean =>
+  (import.meta.env.DEV || import.meta.env.VITE_ALLOW_MOCK === '1') &&
+  !!localStorage.getItem('mm.devBypass')
 
 export const savedEmail = (): string | null => localStorage.getItem(EMAIL_KEY)
 export const lastLoginMethod = (): string | null => localStorage.getItem(METHOD_KEY)

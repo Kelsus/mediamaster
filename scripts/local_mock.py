@@ -75,6 +75,15 @@ for name, show_type, service, source, status, rating in SEED:
                    status=Status(status), rating=rating),
     )
 
+extra = int(os.environ.get("MOCK_SCALE", "0"))
+if extra:
+    from mediamaster_api.rank import evenly_spaced
+
+    for i, r in enumerate(evenly_spaced(extra)):
+        db.create_show(UID, ShowCreate(name=f"Filler Show {i:03d}", show_type="tv",
+                                       rank=r, status=Status.to_watch))
+    print(f"Scale mode: +{extra} filler cards in to_watch")
+
 print(f"Seeded {len(SEED)} shows for uid '{UID}'")
 
 import uvicorn  # noqa: E402
