@@ -87,7 +87,7 @@ def test_board_pins_discoveries_above_higher_scores(profiled, monkeypatch):
     assert names == ["Fresh Find", "Old Favorite Queued"]  # pin beats score 99
 
 
-def test_rescore_unpins(profiled, monkeypatch):
+def test_sort_unpins_but_rescore_does_not(profiled, monkeypatch):
     monkeypatch.setattr(scorer.discover, "find_candidates",
                         _stub_candidates([_cand("Fresh Find", "tv", score=70)]))
     monkeypatch.setattr(scorer.taste, "client", lambda: None)
@@ -95,8 +95,13 @@ def test_rescore_unpins(profiled, monkeypatch):
     board = profiled.get("/api/board?medium=show").json()["columns"]["to_watch"]
     show_id = board[0]["show_id"]
 
-    # a full re-score writes fresh scores with no discovered_at -> pin removed
+    # a re-score does NOT touch the pin any more...
     db.write_show_score(TEST_UID, show_id, 71, "re-ranked", now_iso(), "h1")
+    board = profiled.get("/api/board?medium=show").json()["columns"]["to_watch"]
+    assert board[0].get("discovered_at") is not None
+
+    # ...the user's Sort action does.
+    profiled.post("/api/sort?medium=show")
     board = profiled.get("/api/board?medium=show").json()["columns"]["to_watch"]
     assert board[0].get("discovered_at") is None
 

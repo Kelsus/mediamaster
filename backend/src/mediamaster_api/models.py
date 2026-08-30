@@ -31,6 +31,7 @@ class ShowCreate(BaseModel):
     name: str = Field(min_length=1, max_length=300)
     show_type: ShowType
     medium: Medium = Medium.show
+    rank: Optional[str] = Field(default=None, max_length=80, pattern=r"^[0-9A-Za-z]+$")
     author: Optional[str] = Field(default=None, max_length=200)
     series: Optional[str] = Field(default=None, max_length=200)
     series_index: Optional[float] = Field(default=None, ge=0, le=200)
@@ -53,6 +54,7 @@ class ShowCreate(BaseModel):
 class ShowPatch(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=300)
     show_type: Optional[ShowType] = None
+    rank: Optional[str] = Field(default=None, max_length=80, pattern=r"^[0-9A-Za-z]+$")
     # service/source/author/series are clearable: distinguish "absent" from
     # explicit null via model_fields_set in the route
     author: Optional[str] = Field(default=None, max_length=200)
@@ -83,6 +85,7 @@ class Show(BaseModel):
     series: Optional[str] = None
     series_index: Optional[float] = None
     unverified: bool = False  # imported from the shared account, ownership unconfirmed
+    rank: Optional[str] = None  # fractional index; column order = rank asc
     service: Optional[str] = None
     source: Optional[str] = None
     status: Status

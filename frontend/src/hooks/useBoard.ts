@@ -15,14 +15,13 @@ export function useBoard(medium: Medium) {
 }
 
 /** Insert into a column keeping to_watch ordered by known scores, others by recency. */
-function insertInto(column: Show[], show: Show, status: Status): Show[] {
-  if (status === 'to_watch') {
-    const score = show.predicted_score ?? 0
-    const idx = column.findIndex((s) => (s.predicted_score ?? 0) < score)
-    const at = idx === -1 ? column.length : idx
-    return [...column.slice(0, at), show, ...column.slice(at)]
-  }
-  return [show, ...column]
+function insertInto(column: Show[], show: Show): Show[] {
+  // Placement is rank-driven everywhere; rank-less cards float to top (they
+  // are optimistic temps the server will rank at top anyway).
+  if (!show.rank) return [show, ...column]
+  const idx = column.findIndex((s) => !s.rank || s.rank > show.rank!)
+  const at = idx === -1 ? column.length : idx
+  return [...column.slice(0, at), show, ...column.slice(at)]
 }
 
 function moveShow(board: Board, showId: string, patch: ShowPatch): Board {
@@ -42,7 +41,7 @@ function moveShow(board: Board, showId: string, patch: ShowPatch): Board {
     moved.rating = undefined
   }
   moved.status = target
-  columns[target] = insertInto(columns[target], moved, target)
+  columns[target] = insertInto(columns[target], moved)
   return { columns }
 }
 
@@ -81,6 +80,7 @@ export function useShowMutations(medium: Medium) {
       name: string
       show_type: ShowType
       status?: Status
+      rank?: string
       author?: string
       service?: string
       source?: string
@@ -92,6 +92,7 @@ export function useShowMutations(medium: Medium) {
         name: args.name,
         show_type: args.show_type,
         medium,
+        rank: args.rank,
         author: args.author,
         service: args.service,
         source: args.source,

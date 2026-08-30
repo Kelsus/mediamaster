@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { useDroppable } from '@dnd-kit/core'
+import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import type { Medium, Show, Status } from '../api/types'
 import { ShowCard } from './ShowCard'
 
@@ -53,18 +54,23 @@ export function Column({ status, medium, shows, onPatch, onDelete, onTransfer, c
         <span className="column-count">{shows.length}</span>
       </header>
       {children}
-      <div className="column-cards">
-        {shows.length === 0 && <p className="column-empty">{EMPTY[medium][status]}</p>}
-        {shows.map((show) => (
-          <ShowCard
-            key={show.show_id}
-            show={show}
-            onPatch={(patch) => onPatch(show.show_id, patch)}
-            onDelete={() => onDelete(show.show_id)}
-            onTransfer={(toUid) => onTransfer(show.show_id, toUid)}
-          />
-        ))}
-      </div>
+      <SortableContext
+        items={shows.map((s) => s.show_id)}
+        strategy={verticalListSortingStrategy}
+      >
+        <div className="column-cards">
+          {shows.length === 0 && <p className="column-empty">{EMPTY[medium][status]}</p>}
+          {shows.map((show) => (
+            <ShowCard
+              key={show.show_id}
+              show={show}
+              onPatch={(patch) => onPatch(show.show_id, patch)}
+              onDelete={() => onDelete(show.show_id)}
+              onTransfer={(toUid) => onTransfer(show.show_id, toUid)}
+            />
+          ))}
+        </div>
+      </SortableContext>
     </section>
   )
 }

@@ -26,6 +26,7 @@ export interface Show {
   series?: string
   series_index?: number
   unverified?: boolean
+  rank?: string
   service?: string
   source?: string
   status: Status
@@ -94,6 +95,9 @@ export interface ShowPatch {
   source?: string | null
   status?: Status
   rating?: number | null
+  rank?: string
+  author?: string | null
+  unverified?: boolean
 }
 
 export interface AppConfig {

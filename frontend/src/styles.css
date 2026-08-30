@@ -208,6 +208,7 @@ input {
 
 .card {
   position: relative;
+  touch-action: pan-y; /* native vertical scroll; drags need the 250ms dwell */
   background: var(--card);
   border: 1px solid var(--rule);
   border-left: 3px solid var(--ink);
@@ -217,7 +218,6 @@ input {
   content-visibility: auto;
   contain-intrinsic-size: auto 74px;
   transition: box-shadow 120ms ease, transform 120ms ease;
-  touch-action: none;
   user-select: none;
   -webkit-user-select: none;
 }
@@ -952,4 +952,15 @@ input {
 .medium-tabs button.active {
   background: var(--ink);
   color: var(--paper);
+}
+
+
+@media (max-width: 768px) {
+  .column-cards {
+    gap: 0.8rem; /* fatter gutters: scroll thumbs land between cards more often */
+    padding-right: 0.35rem;
+  }
+  .card {
+    padding-right: 1.1rem;
+  }
 }

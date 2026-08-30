@@ -95,13 +95,18 @@ def test_board_sort_llm_first_then_stats(client):
     db.write_show_score("test-user", low, 20, "meh", "2026-01-01T00:00:00+00:00", "v1")
     db.write_show_score("test-user", high, 95, "perfect fit", "2026-01-01T00:00:00+00:00", "v1")
 
+    # Placement is user-owned: creation order (each new card on top) holds
+    # regardless of scores...
     board = client.get("/api/board").json()["columns"]["to_watch"]
     names = [s["name"] for s in board]
-    assert names[0] == "llm high"
-    assert names[1] == "llm low"
-    # unscored shows follow, in stats/recency order
-    assert set(names[2:]) == {"unscored newer", "unscored older"}
-    assert board[0]["llm_reason"] == "perfect fit"
+    assert names == ["unscored older", "unscored newer", "llm high", "llm low"]
+    assert {s["name"]: s.get("llm_reason") for s in board}["llm high"] == "perfect fit"
+
+    # ...until an explicit Sort, which reorders by score once.
+    resp = client.post("/api/sort")
+    assert resp.json()["sorted"] == 4
+    names = [s["name"] for s in client.get("/api/board").json()["columns"]["to_watch"]]
+    assert names[:2] == ["llm high", "llm low"]
 
 
 def test_patch_preserves_llm_score(client):

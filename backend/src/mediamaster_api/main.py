@@ -7,7 +7,8 @@ from fastapi.middleware.gzip import GZipMiddleware
 from mangum import Mangum
 from pydantic import BaseModel, Field
 
-from . import db, scoring, seasons
+from . import db, scoring
+from . import rank as rank_module, seasons
 from .auth import current_uid, jwt_only_uid
 from .models import (
     BulkCreate, Medium, Show, ShowCreate, ShowPatch, ShowType, Status, TokenCreate,
@@ -42,18 +43,31 @@ def board(medium: Medium = Medium.show, uid: str = Depends(current_uid)) -> dict
     for show in shows:
         by_status[show.status.value].append(show)
 
-    # LLM score drives the order; the stats sorter breaks ties and covers
-    # not-yet-scored shows (which sort after scored ones, stats-ordered).
-    # Fresh Discovery finds pin above everything until a re-score unpins them.
-    stats_sorted = scoring.sort_to_watch(by_status["to_watch"])
-    stats_sorted.sort(key=lambda s: s.llm_score if s.llm_score is not None else -1, reverse=True)
-    stats_sorted.sort(key=lambda s: s.discovered_at or "", reverse=True)
-    by_status["to_watch"] = stats_sorted
-    by_status["watching"].sort(key=lambda s: s.status_changed_at, reverse=True)
-    by_status["done"].sort(key=lambda s: s.rated_at or s.status_changed_at, reverse=True)
-    by_status["poubelle"].sort(key=lambda s: s.status_changed_at, reverse=True)
+    # Placement is user-owned: rank ascending everywhere, scores are advisory.
+    # Rank-less items (pre-migration or races) sink to the bottom in legacy
+    # recency order so nothing ever disappears.
+    for col in by_status.values():
+        col.sort(key=lambda s: s.status_changed_at, reverse=True)
+        col.sort(key=lambda s: (s.rank is None, s.rank or "", s.show_id))
 
     return {"columns": {k: [s.model_dump(exclude_none=True) for s in v] for k, v in by_status.items()}}
+
+
+@app.post("/api/sort")
+def sort_queue(medium: Medium = Medium.show, uid: str = Depends(current_uid)) -> dict:
+    """One-time reorder of To Watch by taste score; clears discovery pins.
+    Synchronous and LLM-free — it ranks by scores already on the cards."""
+    shows = [s for s in db.list_shows(uid)
+             if s.medium == medium and s.status == Status.to_watch]
+    scoring.score_board(shows)
+    shows.sort(key=lambda s: (
+        -(s.llm_score if s.llm_score is not None else -1),
+        -(s.predicted_score or 0),
+        s.created_at,
+    ))
+    new_ranks = rank_module.evenly_spaced(len(shows))
+    db.apply_sorted_ranks(uid, [(s.show_id, r) for s, r in zip(shows, new_ranks)])
+    return {"sorted": len(shows)}
 
 
 def _invoke_scorer(payload: dict) -> None:
@@ -82,6 +96,18 @@ def create_show(payload: ShowCreate, uid: str = Depends(current_uid)) -> Show:
 
 @app.post("/api/shows/bulk")
 def bulk_create(payload: BulkCreate, uid: str = Depends(current_uid)) -> dict:
+    # Chain ranks in-memory: one column read per (medium, status), then each
+    # row prepends above the previous — preserves "newest import on top".
+    tops: dict[tuple[str, str], str | None] = {}
+    for sc in payload.shows:
+        key = (sc.medium.value, sc.status.value)
+        if sc.rank is None:
+            if key not in tops:
+                tops[key] = db.top_rank(uid, *key)
+                sc.rank = tops[key]
+            else:
+                sc.rank = rank_module.rank_between(None, tops[key])
+            tops[key] = sc.rank
     created = [db.create_show(uid, s) for s in payload.shows]
     return {"created": len(created), "show_ids": [s.show_id for s in created]}
 

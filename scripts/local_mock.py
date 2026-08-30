@@ -69,13 +69,11 @@ SEED = [
 ]
 
 for name, show_type, service, source, status, rating in SEED:
-    show = db.create_show(
+    db.create_show(
         UID,
-        ShowCreate(name=name, show_type=show_type, service=service, source=source),
+        ShowCreate(name=name, show_type=show_type, service=service, source=source,
+                   status=Status(status), rating=rating),
     )
-    if status != "to_watch":
-        patch = ShowPatch(status=Status(status), rating=rating)
-        db.patch_show(UID, show, patch, patch.model_fields_set)
 
 print(f"Seeded {len(SEED)} shows for uid '{UID}'")
 

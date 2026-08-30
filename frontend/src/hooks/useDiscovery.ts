@@ -41,6 +41,12 @@ export function useDiscovery(medium: Medium) {
     onSettled: () => qc.invalidateQueries({ queryKey: ['taste', medium] }),
   })
 
+  // Instant, LLM-free: reorders the queue by existing scores + clears NEW pins.
+  const sortByScore = useMutation({
+    mutationFn: () => api(`/api/sort?medium=${medium}`, { method: 'POST' }),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['board', medium] }),
+  })
+
   const discoverRunning =
     startDiscover.isPending || scout.data?.discover_status === 'running'
   const rescoreRunning = rescore.isPending || taste.data?.scoring_status === 'running'
@@ -54,6 +60,8 @@ export function useDiscovery(medium: Medium) {
 
   return {
     scout,
+    sortByScore: () => sortByScore.mutate(),
+    sortPending: sortByScore.isPending,
     startDiscover: () => startDiscover.mutate(),
     discoverRunning,
     rescore: () => rescore.mutate(),

@@ -3,12 +3,15 @@ import {
   DndContext,
   DragOverlay,
   KeyboardSensor,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
+  closestCorners,
   useSensor,
   useSensors,
   type DragEndEvent,
   type DragStartEvent,
 } from '@dnd-kit/core'
+import { rankAt } from '../lib/rank'
 import { Link, NavLink } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import type { Medium, Show, Status } from '../api/types'
@@ -53,7 +56,7 @@ const ADD_PLACEHOLDERS: Record<Medium, Record<Status, string>> = {
 export function BoardPage({ medium }: { medium: Medium }) {
   const { data, isLoading, error } = useBoard(medium)
   const { addShow, patchShow, deleteShow, transferShow } = useShowMutations(medium)
-  const { startDiscover, discoverRunning, rescore, rescoreRunning } = useDiscovery(medium)
+  const { startDiscover, discoverRunning, sortByScore, sortPending } = useDiscovery(medium)
   const [active, setActive] = useState<Show | null>(null)
   const [unverifiedOnly, setUnverifiedOnly] = useState(false)
   const [nudgeState, setNudgeState] = useState<'idle' | 'busy' | 'done' | 'dismissed' | 'error'>(
@@ -86,8 +89,13 @@ export function BoardPage({ medium }: { medium: Medium }) {
     }
   }
 
+  // Mouse and touch get separate activation rules: a mouse drag starts after
+  // 5px of intent; a finger must DWELL 250ms (scroll flicks never grab cards).
+  // PointerSensor is deliberately absent — it would race TouchSensor and lift
+  // cards on flicks.
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(MouseSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 8 } }),
     useSensor(CardKeyboardSensor),
   )
 
@@ -98,9 +106,45 @@ export function BoardPage({ medium }: { medium: Medium }) {
   const onDragEnd = (e: DragEndEvent) => {
     setActive(null)
     const show = (e.active.data.current as { show: Show })?.show
-    const target = e.over?.id as Status | undefined
-    if (!show || !target || target === show.status) return
-    patchShow.mutate({ showId: show.show_id, patch: { status: target } })
+    const overId = e.over?.id as string | undefined
+    if (!show || !overId || !data) return
+
+    const cols = data.columns
+    const findContainer = (id: string): Status | undefined => {
+      if ((STATUSES as string[]).includes(id)) return id as Status
+      return STATUSES.find((st) => cols[st].some((c) => c.show_id === id))
+    }
+    const target = findContainer(overId)
+    if (!target) return
+
+    // Layout never mutates mid-drag, so the cache arrays ARE the geometry:
+    // dropping on a card takes its slot; dropping on column chrome goes on top.
+    const targetCards = cols[target].filter((c) => c.show_id !== show.show_id)
+    let insertAt = 0
+    if (overId !== target) {
+      const overIndex = targetCards.findIndex((c) => c.show_id === overId)
+      if (overIndex < 0) return
+      const sameColumn = target === show.status
+      const fromIndex = cols[target].findIndex((c) => c.show_id === show.show_id)
+      const overOriginal = cols[target].findIndex((c) => c.show_id === overId)
+      // Moving down within a column lands AFTER the over card (arrayMove
+      // semantics); everything else lands at the over card's slot.
+      insertAt = sameColumn && fromIndex >= 0 && fromIndex < overOriginal
+        ? overIndex + 1
+        : overIndex
+    }
+    if (target === show.status && cols[target][insertAt]?.show_id === show.show_id) {
+      return // dropped back onto its own slot
+    }
+    let rank: string
+    try {
+      rank = rankAt(targetCards.map((c) => c.rank), insertAt)
+    } catch {
+      rank = rankAt([targetCards[insertAt - 1]?.rank].filter(Boolean) as string[], 1)
+    }
+    const patch: { rank: string; status?: Status } = { rank }
+    if (target !== show.status) patch.status = target
+    patchShow.mutate({ showId: show.show_id, patch })
   }
 
   if (isLoading) return <div className="board-status">loading the archive…</div>
@@ -153,6 +197,15 @@ export function BoardPage({ medium }: { medium: Medium }) {
           >
             {discoverRunning ? 'discovering…' : '✦ Discover'}
           </button>
+          <button
+            type="button"
+            className="link-button"
+            disabled={sortPending}
+            title={`One-time reorder of ${medium === 'book' ? 'To Read' : 'To Watch'} by taste score — the order stays yours afterwards`}
+            onClick={() => sortByScore()}
+          >
+            {sortPending ? 'sorting…' : 'Sort by score'}
+          </button>
           <Link to="/settings">Settings</Link>
           <button type="button" className="link-button" onClick={signOut}>
             Sign out
@@ -204,15 +257,23 @@ export function BoardPage({ medium }: { medium: Medium }) {
           <button
             type="button"
             className="nudge-cta"
-            disabled={rescoreRunning}
-            onClick={() => rescore()}
+            disabled={sortPending}
+            onClick={() => sortByScore()}
           >
-            {rescoreRunning ? 'Ranking…' : 'Rank into the list'}
+            {sortPending ? 'Ranking…' : 'Rank into the list'}
           </button>
         </div>
       )}
 
-      <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCorners}
+        autoScroll={{ threshold: { x: 0.15, y: 0.15 }, acceleration: 8 }}
+        onDragStart={onDragStart}
+        onDragMove={(e) => (window as any).__dbg?.push({ over: String(e.over?.id), x: Math.round(e.delta.x), y: Math.round(e.delta.y) })}
+        onDragEnd={onDragEnd}
+        onDragCancel={() => setActive(null)}
+      >
         <main className="board">
           {STATUSES.map((status) => (
             <Column
@@ -228,7 +289,13 @@ export function BoardPage({ medium }: { medium: Medium }) {
                 medium={medium}
                 placeholder={ADD_PLACEHOLDERS[medium][status]}
                 onAdd={(name, show_type, author) =>
-                  addShow.mutate({ name, show_type, author, status })
+                  addShow.mutate({
+                    name,
+                    show_type,
+                    author,
+                    status,
+                    rank: rankAt(board.columns[status].map((s) => s.rank), 0),
+                  })
                 }
               />
             </Column>

@@ -1,5 +1,6 @@
 import { memo, useEffect, useState } from 'react'
-import { useDraggable } from '@dnd-kit/core'
+import { useSortable } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import type { Show } from '../api/types'
 import { useOtherUsers } from '../hooks/useUsers'
 import { EditableText } from './EditableText'
@@ -14,7 +15,7 @@ interface Props {
 }
 
 export const ShowCard = memo(function ShowCard({ show, onPatch, onDelete, onTransfer }: Props) {
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+  const { attributes, listeners, setNodeRef, isDragging, transform, transition } = useSortable({
     id: show.show_id,
     data: { show },
   })
@@ -23,6 +24,7 @@ export const ShowCard = memo(function ShowCard({ show, onPatch, onDelete, onTran
     <article
       ref={setNodeRef}
       className={`card ${isDragging ? 'card-dragging' : ''}`}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
       {...attributes}
       {...listeners}
     >

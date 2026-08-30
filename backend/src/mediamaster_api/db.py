@@ -9,6 +9,7 @@ from boto3.dynamodb.conditions import Key
 from ulid import ULID
 
 from .models import Show, ShowCreate, ShowPatch, Status, now_iso
+from .rank import rank_between
 
 _table = None
 
@@ -41,6 +42,7 @@ def _item_to_show(item: dict) -> Show:
         updated_at=item["updated_at"],
         status_changed_at=item["status_changed_at"],
         rated_at=item.get("rated_at"),
+        rank=item.get("rank"),
         medium=item.get("medium", "show"),
         author=item.get("author"),
         series=item.get("series"),
@@ -71,11 +73,22 @@ def list_shows(uid: str) -> list[Show]:
         kwargs["ExclusiveStartKey"] = lek
 
 
+def top_rank(uid: str, medium: str, status: str) -> str:
+    """A rank above everything currently in the column."""
+    current_top = None
+    for s in list_shows(uid):
+        if s.medium.value == medium and s.status.value == status and s.rank:
+            if current_top is None or s.rank < current_top:
+                current_top = s.rank
+    return rank_between(None, current_top)
+
+
 def create_show(uid: str, payload: ShowCreate) -> Show:
     now = now_iso()
     show_id = str(ULID())
     created_at = payload.created_at or now
     rating = payload.rating if payload.status == Status.done else None
+    rank = payload.rank or top_rank(uid, payload.medium.value, payload.status.value)
     item = {
         "PK": _user_pk(uid),
         "SK": _show_sk(show_id),
@@ -84,6 +97,7 @@ def create_show(uid: str, payload: ShowCreate) -> Show:
         "show_type": payload.show_type.value,
         "medium": payload.medium.value,
         "status": payload.status.value,
+        "rank": rank,
         "created_at": created_at,
         "updated_at": now,
         "status_changed_at": now,
@@ -130,7 +144,7 @@ def patch_show(uid: str, show: Show, patch: ShowPatch, fields_set: set[str]) -> 
     now = now_iso()
     item = show.model_dump(mode="json", exclude={"predicted_score", "score_breakdown"})
 
-    for field in ("name", "show_type", "service", "source",
+    for field in ("name", "show_type", "service", "source", "rank",
                   "author", "series", "series_index", "unverified"):
         if field in fields_set:
             value = getattr(patch, field)
@@ -140,6 +154,10 @@ def patch_show(uid: str, show: Show, patch: ShowPatch, fields_set: set[str]) -> 
     if new_status != item["status"]:
         item["status"] = new_status
         item["status_changed_at"] = now
+        if "rank" not in fields_set:
+            # Column change without a drop position: land on top. Lives here
+            # (not just the route) so every caller gets collision-free ranks.
+            item["rank"] = top_rank(uid, item["medium"], new_status)
         if new_status != Status.done.value:
             item["rating"] = None
             item["rated_at"] = None
@@ -166,15 +184,13 @@ def delete_show(uid: str, show_id: str) -> None:
 def write_show_score(uid: str, show_id: str, score: int, reason: str,
                      scored_at: str, profile_version: str,
                      discovered_at: str | None = None) -> None:
-    """Write LLM fields. A full re-score passes discovered_at=None, which
-    REMOVES any discovery pin — scoring an item folds it into the ranking."""
+    """Write LLM fields. Never touches rank or an existing discovery pin —
+    ordering and pin-clearing belong to the user's Sort action, not scoring."""
     expr = "SET llm_score = :s, llm_reason = :r, scored_at = :t, profile_version = :v"
     values = {":s": score, ":r": reason, ":t": scored_at, ":v": profile_version}
     if discovered_at is not None:
         expr += ", discovered_at = :d"
         values[":d"] = discovered_at
-    else:
-        expr += " REMOVE discovered_at"
     table().update_item(
         Key={"PK": _user_pk(uid), "SK": _show_sk(show_id)},
         # guard: the show may have been deleted mid-run
@@ -182,6 +198,18 @@ def write_show_score(uid: str, show_id: str, score: int, reason: str,
         UpdateExpression=expr,
         ExpressionAttributeValues=values,
     )
+
+
+def apply_sorted_ranks(uid: str, updates: list[tuple[str, str]]) -> None:
+    """Sort action: write fresh ranks (and clear pins) for the given show_ids."""
+    for show_id, new_rank in updates:
+        table().update_item(
+            Key={"PK": _user_pk(uid), "SK": _show_sk(show_id)},
+            ConditionExpression="attribute_exists(PK)",
+            UpdateExpression="SET #r = :r REMOVE discovered_at",
+            ExpressionAttributeNames={"#r": "rank"},
+            ExpressionAttributeValues={":r": new_rank},
+        )
 
 
 # --- Taste profile ------------------------------------------------------------
@@ -249,6 +277,7 @@ def transfer_show(from_uid: str, to_uid: str, show: Show) -> Show:
     """Move a card to another user's board: fresh id, recipient re-scores."""
     moved = show.model_copy(update={
         "show_id": str(ULID()),
+        "rank": top_rank(to_uid, show.medium.value, show.status.value),
         "llm_score": None, "llm_reason": None,
         "scored_at": None, "profile_version": None,
     })
