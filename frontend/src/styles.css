@@ -26,6 +26,7 @@ body,
 #root {
   margin: 0;
   height: 100%;
+  overflow-x: clip; /* the board is the ONLY horizontal scroller */
 }
 
 body {
@@ -55,8 +56,10 @@ input {
 
 .masthead {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   justify-content: space-between;
+  row-gap: 0.35rem;
   padding: 1.1rem 1.6rem 0.7rem;
   border-bottom: 3px double var(--ink);
 }
@@ -77,7 +80,8 @@ input {
 
 .masthead nav {
   display: flex;
-  gap: 1.2rem;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.2rem;
   font-size: 0.82rem;
   text-transform: uppercase;
   letter-spacing: 0.14em;
@@ -253,6 +257,7 @@ input {
 }
 
 .card-overlay {
+  max-width: min(320px, 82vw);
   transform: rotate(2.5deg) scale(1.03);
   box-shadow: 0 14px 30px rgba(29, 26, 20, 0.28);
   cursor: grabbing;
@@ -956,6 +961,14 @@ input {
 
 
 @media (max-width: 768px) {
+  .masthead {
+    padding: 0.8rem 1rem 0.55rem;
+  }
+  .masthead nav {
+    gap: 0.4rem 0.8rem;
+    font-size: 0.72rem;
+    letter-spacing: 0.09em;
+  }
   .column-cards {
     gap: 0.8rem; /* fatter gutters: scroll thumbs land between cards more often */
     padding-right: 0.35rem;
