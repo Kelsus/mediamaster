@@ -237,6 +237,23 @@ def delete_show(show: str, confirm: bool = False) -> Any:
 
 
 @mcp.tool()
+def discover(medium: str = "show") -> Any:
+    """Kick off a Discovery run: Claude finds brand-new titles the taste profile
+    predicts will score high (5 books, or 5 movies + 5 tv shows) and pins them
+    to the top of the queue with a NEW badge. Runs in the background ~1-2 min;
+    check the board or scout status afterwards.
+
+    Args:
+        medium: "show" (default) or "book"
+    """
+    with _client() as c:
+        resp = c.post("/api/discover", params={"medium": medium})
+        resp.raise_for_status()
+    return ("Discovery started — new finds will appear pinned at the top of the "
+            f"{'To Read' if medium == 'book' else 'To Watch'} column in a minute or two")
+
+
+@mcp.tool()
 def transfer_show(show: str, to_email: str, medium: str = "show") -> Any:
     """Move a card to another household member's board (e.g. a book that turned
     out to be theirs). Their taste engine re-scores it on their side.

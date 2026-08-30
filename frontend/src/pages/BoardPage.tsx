@@ -15,6 +15,7 @@ import type { Medium, Show, Status } from '../api/types'
 import { getAccessToken, lastLoginMethod, signOut } from '../api/client'
 import { enrollPasskey, listPasskeys } from '../api/cognito'
 import { useBoard, useShowMutations } from '../hooks/useBoard'
+import { useDiscovery } from '../hooks/useDiscovery'
 import { Column } from '../components/Column'
 import { QuickAdd } from '../components/QuickAdd'
 
@@ -37,6 +38,7 @@ class CardKeyboardSensor extends KeyboardSensor {
 export function BoardPage({ medium }: { medium: Medium }) {
   const { data, isLoading, error } = useBoard(medium)
   const { addShow, patchShow, deleteShow, transferShow } = useShowMutations(medium)
+  const { startDiscover, discoverRunning, rescore, rescoreRunning } = useDiscovery(medium)
   const [active, setActive] = useState<Show | null>(null)
   const [unverifiedOnly, setUnverifiedOnly] = useState(false)
   const [nudgeState, setNudgeState] = useState<'idle' | 'busy' | 'done' | 'dismissed' | 'error'>(
@@ -98,6 +100,7 @@ export function BoardPage({ medium }: { medium: Medium }) {
   const unverifiedCount = Object.values(board.columns)
     .flat()
     .filter((s) => s.unverified).length
+  const freshCount = board.columns.to_watch.filter((s) => s.discovered_at).length
 
   return (
     <div className="board-page">
@@ -122,6 +125,19 @@ export function BoardPage({ medium }: { medium: Medium }) {
               {unverifiedCount} unverified
             </button>
           )}
+          <button
+            type="button"
+            className="link-button discover-button"
+            disabled={discoverRunning}
+            title={
+              medium === 'book'
+                ? 'Have Claude find 5 new books your taste profile predicts you will love'
+                : 'Have Claude find 5 new movies and 5 new TV shows for your queue'
+            }
+            onClick={() => startDiscover()}
+          >
+            {discoverRunning ? 'discovering…' : '✦ Discover'}
+          </button>
           <Link to="/settings">Settings</Link>
           <button type="button" className="link-button" onClick={signOut}>
             Sign out
@@ -161,6 +177,23 @@ export function BoardPage({ medium }: { medium: Medium }) {
               </button>
             </>
           )}
+        </div>
+      )}
+
+      {freshCount > 0 && (
+        <div className="nudge fresh-banner">
+          <span>
+            ✦ {freshCount} fresh {medium === 'book' ? 'reads' : 'finds'} pinned on top of the
+            queue — rank them into the list when you're done looking.
+          </span>
+          <button
+            type="button"
+            className="nudge-cta"
+            disabled={rescoreRunning}
+            onClick={() => rescore()}
+          >
+            {rescoreRunning ? 'Ranking…' : 'Rank into the list'}
+          </button>
         </div>
       )}
 

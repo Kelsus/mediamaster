@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 from botocore.exceptions import ClientError
 
-from . import db, seasons, series, taste
+from . import db, discover, seasons, series, taste
 from .models import Medium, ShowCreate, ShowType, Status, now_iso
 
 log = logging.getLogger(__name__)
@@ -40,6 +40,8 @@ def handler(event, context):
 def _dispatch(uid: str, mode: str, medium: str, event: dict):
     if mode == "single":
         return score_single(uid, event["show_id"])
+    if mode == "discover":
+        return run_discover(uid, medium)
     if mode == "scout":
         if medium == "all":  # monthly rule sweeps both boards
             return {"show": run_scout(uid),
@@ -338,6 +340,96 @@ def run_series_scout(uid: str, series_name: str | None = None) -> dict:
                                      "last_error": f"{type(e).__name__}: {e}"})
         else:
             db.put_scout_state(uid, {"last_single_error_book": f"{type(e).__name__}: {e}"})
+        raise
+
+
+def run_discover(uid: str, medium: str) -> dict:
+    """Find new titles matching the taste profile; pin them atop the queue."""
+    state = db.get_scout_state(uid) or {}
+    if state.get("discover_status") == "running" and is_running(
+        {"scoring_status": "running", "started_at": state.get("discover_started_at")}
+    ):
+        log.info("discovery already in progress for %s; skipping", uid)
+        return {"skipped": "already running"}
+    db.put_scout_state(uid, {"discover_status": "running",
+                             "discover_started_at": now_iso()})
+    totals = {"input_tokens": 0, "output_tokens": 0,
+              "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
+    try:
+        profile_item = db.get_profile(uid, medium)
+        profile_text = (profile_item or {}).get("profile_text")
+        if not profile_text:
+            raise RuntimeError(
+                f"No {medium} taste profile yet — rate a few and run a re-score first")
+
+        shows = [s for s in db.list_shows(uid)
+                 if (s.medium.value if hasattr(s.medium, "value") else s.medium) == medium]
+        board_titles = sorted({s.name for s in shows})
+        # franchise keys catch "recommend Breaking Bad" vs board's "Breaking Bad Season 2"
+        taken_keys = {seasons._key(seasons.parse_name(s.name)[0]) for s in shows}
+        taken_keys |= {seasons._key(s.series) for s in shows if s.series}
+
+        candidates, usage, searches = discover.find_candidates(
+            taste.client(), medium, profile_text, board_titles, now_iso()[:10])
+        _add(totals, usage)
+
+        now = now_iso()
+        created: list[str] = []
+        kept_per_category: dict[str, int] = {}
+        for c in candidates:
+            category = c.get("category") or ""
+            name = (c.get("name") or "").strip()
+            if not name or category not in ("movie", "tv", "book"):
+                continue
+            if (medium == "book") != (category == "book"):
+                continue
+            key = seasons._key(seasons.parse_name(name)[0])
+            if key in taken_keys:
+                continue
+            if kept_per_category.get(category, 0) >= discover.PER_CATEGORY_KEPT:
+                continue
+            taken_keys.add(key)
+            kept_per_category[category] = kept_per_category.get(category, 0) + 1
+
+            series_name = (c.get("series") or "").strip() or None
+            extra = (c.get("service_or_author") or "").strip() or None
+            show = db.create_show(uid, ShowCreate(
+                name=name,
+                show_type=ShowType(category),
+                medium=Medium(medium),
+                service=extra if medium == "show" else None,
+                author=extra if medium == "book" else None,
+                series=series_name,
+                series_index=(c.get("series_index") or None) if series_name else None,
+                source="Discovery",
+                status=Status.to_watch,
+            ))
+            db.write_show_score(
+                uid, show.show_id,
+                max(0, min(100, int(c.get("score") or 0))),
+                (c.get("reason") or "").strip() or "profile fit",
+                now, (profile_item or {}).get("ratings_hash", ""),
+                discovered_at=now,
+            )
+            created.append(name)
+
+        est_cost = (totals["input_tokens"] * 5 + totals["output_tokens"] * 25
+                    + totals["cache_read_input_tokens"] * 0.5
+                    + totals["cache_creation_input_tokens"] * 6.25) / 1_000_000
+        log.info("discovery complete (%s): proposed=%d created=%s searches=%d est_cost=$%.2f",
+                 medium, len(candidates), created, searches, est_cost)
+        db.put_scout_state(uid, {
+            "discover_status": "idle", "discover_started_at": None,
+            f"last_discover_{medium}": {
+                "finished_at": now_iso(), "created": created,
+                "web_searches": searches, "est_cost_usd": f"{est_cost:.2f}",
+            },
+        })
+        return {"created": created}
+    except Exception as e:
+        log.exception("discovery run failed")
+        db.put_scout_state(uid, {"discover_status": "idle", "discover_started_at": None,
+                                 "last_discover_error": f"{type(e).__name__}: {e}"})
         raise
 
 

@@ -582,6 +582,27 @@ input {
   padding: 0.15rem 0.4rem;
 }
 
+.new-chip {
+  flex-shrink: 0;
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  padding: 0.12rem 0.4rem;
+  background: var(--gold, #c9a227);
+  color: var(--card);
+  border-radius: 2px;
+}
+
+.fresh-banner {
+  background: var(--gold-deep, #8a6d1a);
+}
+
+.discover-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 /* quick add */
 
 .quick-add {

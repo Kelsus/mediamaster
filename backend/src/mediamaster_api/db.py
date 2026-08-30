@@ -46,6 +46,7 @@ def _item_to_show(item: dict) -> Show:
         series=item.get("series"),
         series_index=float(item["series_index"]) if item.get("series_index") is not None else None,
         unverified=bool(item.get("unverified", False)),
+        discovered_at=item.get("discovered_at"),
         llm_score=int(item["llm_score"]) if item.get("llm_score") is not None else None,
         llm_reason=item.get("llm_reason"),
         scored_at=item.get("scored_at"),
@@ -163,13 +164,23 @@ def delete_show(uid: str, show_id: str) -> None:
 
 
 def write_show_score(uid: str, show_id: str, score: int, reason: str,
-                     scored_at: str, profile_version: str) -> None:
+                     scored_at: str, profile_version: str,
+                     discovered_at: str | None = None) -> None:
+    """Write LLM fields. A full re-score passes discovered_at=None, which
+    REMOVES any discovery pin — scoring an item folds it into the ranking."""
+    expr = "SET llm_score = :s, llm_reason = :r, scored_at = :t, profile_version = :v"
+    values = {":s": score, ":r": reason, ":t": scored_at, ":v": profile_version}
+    if discovered_at is not None:
+        expr += ", discovered_at = :d"
+        values[":d"] = discovered_at
+    else:
+        expr += " REMOVE discovered_at"
     table().update_item(
         Key={"PK": _user_pk(uid), "SK": _show_sk(show_id)},
         # guard: the show may have been deleted mid-run
         ConditionExpression="attribute_exists(PK)",
-        UpdateExpression="SET llm_score = :s, llm_reason = :r, scored_at = :t, profile_version = :v",
-        ExpressionAttributeValues={":s": score, ":r": reason, ":t": scored_at, ":v": profile_version},
+        UpdateExpression=expr,
+        ExpressionAttributeValues=values,
     )
 
 

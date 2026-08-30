@@ -34,6 +34,7 @@ export interface Show {
   updated_at: string
   status_changed_at: string
   rated_at?: string
+  discovered_at?: string
   llm_score?: number
   llm_reason?: string
   scored_at?: string
@@ -63,6 +64,14 @@ export interface TasteProfile {
 
 export interface ScoutState {
   scout_status: 'idle' | 'running'
+  discover_status: 'idle' | 'running'
+  last_discover: {
+    finished_at: string
+    created: string[]
+    web_searches: number
+    est_cost_usd: string
+  } | null
+  last_discover_error: string | null
   last_run: {
     finished_at: string
     mode: 'full' | 'single'

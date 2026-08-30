@@ -32,6 +32,11 @@ export const ShowCard = memo(function ShowCard({ show, onPatch, onDelete, onTran
           className="card-title"
           onCommit={(name) => onPatch({ name })}
         />
+        {show.discovered_at && (
+          <span className="new-chip" title="Fresh discovery — not yet ranked into the list">
+            ✦ new
+          </span>
+        )}
         {show.status === 'to_watch' && <ScoreChip show={show} />}
       </header>
 

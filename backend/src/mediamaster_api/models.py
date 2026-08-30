@@ -91,6 +91,9 @@ class Show(BaseModel):
     updated_at: str
     status_changed_at: str
     rated_at: Optional[str] = None
+    # Set by Discovery runs; while present the card pins to the top of the
+    # queue with a NEW badge. Cleared by the next full re-score of its medium.
+    discovered_at: Optional[str] = None
     # LLM taste-engine outputs — persisted on the item (unlike the computed
     # stats fields below, so they MUST survive patch_show's item rebuild)
     llm_score: Optional[int] = None
