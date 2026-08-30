@@ -104,6 +104,21 @@ Sign in with the password, enroll a passkey when the banner offers, add some
 shows, rate a few, and hit **Settings → Re-score now**. A full run takes about
 ten minutes; the board reorders itself with Claude's reasoning on every card.
 
+### Custom domain (optional)
+
+Request an ACM certificate for your domain **in us-east-1**, validate it via
+DNS, then add to `.env`:
+
+```
+CUSTOM_DOMAIN=media.example.com
+CERT_ARN=arn:aws:acm:us-east-1:...:certificate/...
+```
+
+Re-run `make deploy` and point DNS (ALIAS/CNAME) at the CloudFront domain the
+deploy prints. The custom domain becomes the passkey relying-party ID, so
+enrolled passkeys must be re-enrolled once after the switch (password login is
+unaffected); the raw CloudFront URL 301-redirects to the custom domain.
+
 ### Claude / MCP integration
 
 Mint an API token in **Settings → API tokens**, then:

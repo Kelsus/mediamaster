@@ -3,6 +3,7 @@ from pathlib import Path
 import aws_cdk as cdk
 from aws_cdk import (
     aws_apigatewayv2 as apigwv2,
+    aws_certificatemanager as acm,
     aws_apigatewayv2_integrations as apigwv2_integrations,
     aws_cloudfront as cloudfront,
     aws_cloudfront_origins as origins,
@@ -20,10 +21,21 @@ from constructs import Construct
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # Rewrites extensionless paths to the SPA entry point. Attached only to the
-# default (S3) behavior, so /api/* is never touched.
+# default (S3) behavior, so /api/* is never touched. When a custom domain is
+# configured, requests reaching CloudFront under any other host (the
+# *.cloudfront.net domain) are redirected to it — passkeys only work on the
+# canonical domain, so stale bookmarks must not strand users on the old one.
 SPA_REWRITE_FN = """\
 function handler(event) {
   var request = event.request;
+  var canonical = '%(canonical)s';
+  if (canonical && request.headers.host.value !== canonical) {
+    return {
+      statusCode: 301,
+      statusDescription: 'Moved Permanently',
+      headers: { location: { value: 'https://' + canonical + request.uri } },
+    };
+  }
   if (!request.uri.includes('.')) {
     request.uri = '/index.html';
   }
@@ -35,6 +47,12 @@ function handler(event) {
 class MediamasterStack(cdk.Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
+
+        # Optional custom domain: -c custom_domain=media.example.com -c cert_arn=arn:...
+        # (cert must live in us-east-1). Passkeys re-bind to the new domain — users
+        # re-enroll after switching.
+        custom_domain = self.node.try_get_context("custom_domain")
+        cert_arn = self.node.try_get_context("cert_arn")
 
         # Passkey RP ID must equal the domain the app is served from. The
         # CloudFront domain is only known after the first deploy, so it arrives
@@ -161,14 +179,26 @@ class MediamasterStack(cdk.Stack):
         spa_rewrite = cloudfront.Function(
             self,
             "SpaRewrite",
-            code=cloudfront.FunctionCode.from_inline(SPA_REWRITE_FN),
+            code=cloudfront.FunctionCode.from_inline(
+                SPA_REWRITE_FN % {"canonical": custom_domain or ""}
+            ),
             runtime=cloudfront.FunctionRuntime.JS_2_0,
         )
+
+        domain_kwargs: dict = {}
+        if custom_domain and cert_arn:
+            domain_kwargs = {
+                "domain_names": [custom_domain],
+                "certificate": acm.Certificate.from_certificate_arn(
+                    self, "CustomDomainCert", cert_arn
+                ),
+            }
 
         api_domain = cdk.Fn.select(2, cdk.Fn.split("/", http_api.api_endpoint))
         distribution = cloudfront.Distribution(
             self,
             "Distribution",
+            **domain_kwargs,
             default_behavior=cloudfront.BehaviorOptions(
                 origin=origins.S3BucketOrigin.with_origin_access_control(site_bucket),
                 viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
