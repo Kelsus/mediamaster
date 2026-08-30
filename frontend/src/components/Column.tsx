@@ -39,10 +39,11 @@ interface Props {
   shows: Show[]
   onPatch: (showId: string, patch: object) => void
   onDelete: (showId: string) => void
+  onTransfer: (showId: string, toUid: string) => void
   children?: ReactNode // quick-add row for to_watch
 }
 
-export function Column({ status, medium, shows, onPatch, onDelete, children }: Props) {
+export function Column({ status, medium, shows, onPatch, onDelete, onTransfer, children }: Props) {
   const { setNodeRef, isOver } = useDroppable({ id: status })
 
   return (
@@ -60,6 +61,7 @@ export function Column({ status, medium, shows, onPatch, onDelete, children }: P
             show={show}
             onPatch={(patch) => onPatch(show.show_id, patch)}
             onDelete={() => onDelete(show.show_id)}
+            onTransfer={(toUid) => onTransfer(show.show_id, toUid)}
           />
         ))}
       </div>

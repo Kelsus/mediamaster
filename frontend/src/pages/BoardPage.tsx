@@ -36,7 +36,7 @@ class CardKeyboardSensor extends KeyboardSensor {
 
 export function BoardPage({ medium }: { medium: Medium }) {
   const { data, isLoading, error } = useBoard(medium)
-  const { addShow, patchShow, deleteShow } = useShowMutations(medium)
+  const { addShow, patchShow, deleteShow, transferShow } = useShowMutations(medium)
   const [active, setActive] = useState<Show | null>(null)
   const [unverifiedOnly, setUnverifiedOnly] = useState(false)
   const [nudgeState, setNudgeState] = useState<'idle' | 'busy' | 'done' | 'dismissed' | 'error'>(
@@ -174,6 +174,7 @@ export function BoardPage({ medium }: { medium: Medium }) {
               shows={columns[status]}
               onPatch={(showId, patch) => patchShow.mutate({ showId, patch })}
               onDelete={(showId) => deleteShow.mutate({ showId })}
+              onTransfer={(showId, toUid) => transferShow.mutate({ showId, toUid })}
             >
               {status === 'to_watch' && (
                 <QuickAdd

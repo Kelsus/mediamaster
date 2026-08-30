@@ -42,27 +42,38 @@ def main() -> None:
     ap.add_argument("--api-url", required=True)
     ap.add_argument("--token", required=True)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--keep-label", default="his",
+                    help="classification label imported clean (default: his)")
+    ap.add_argument("--flag-label", default="unsure",
+                    help="classification label imported with unverified=true")
+    ap.add_argument("--extra-flagged", default=None,
+                    help="JSON file: list of titles to import flagged regardless of label")
     args = ap.parse_args()
 
     rows = json.load(open(args.rows))
     classes = {norm(k): v for k, v in json.load(open(args.classification)).items()}
+    extra_flagged = set()
+    if args.extra_flagged:
+        extra_flagged = {norm(t) for t in json.load(open(args.extra_flagged))}
 
     board = api(args.api_url, args.token, "GET", "/api/board?medium=book")
     existing = {norm(s["name"]) for col in board["columns"].values() for s in col}
 
-    payloads, skipped_hers, skipped_dupe, unclassified = [], [], 0, []
+    payloads, skipped_other, skipped_dupe, unclassified = [], [], 0, []
     for title, author, series, series_index, _finished in rows:
-        cls = classes.get(norm(title))
-        if cls is None:
+        key = norm(title)
+        cls = classes.get(key)
+        flagged_extra = key in extra_flagged
+        if cls is None and not flagged_extra:
             unclassified.append(title)
-            cls = "unsure"
-        if cls == "hers":
-            skipped_hers.append(title)
+            cls = args.flag_label
+        if not flagged_extra and cls not in (args.keep_label, args.flag_label):
+            skipped_other.append(title)
             continue
-        if norm(title) in existing:
+        if key in existing:
             skipped_dupe += 1
             continue
-        existing.add(norm(title))
+        existing.add(key)
         payloads.append({
             "name": title,
             "show_type": "book",
@@ -70,12 +81,12 @@ def main() -> None:
             "author": author,
             "series": series,
             "series_index": series_index,
-            "unverified": cls == "unsure",
+            "unverified": flagged_extra or cls == args.flag_label,
             "status": "done",
         })
 
-    print(f"import: {len(payloads)}  hers-skipped: {len(skipped_hers)}  "
-          f"dupes: {skipped_dupe}  unclassified->unsure: {len(unclassified)}")
+    print(f"import: {len(payloads)}  skipped-other: {len(skipped_other)}  "
+          f"dupes: {skipped_dupe}  unclassified->flagged: {len(unclassified)}")
     if args.dry_run:
         print(json.dumps(payloads[:5], indent=1, ensure_ascii=False))
         return

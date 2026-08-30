@@ -57,6 +57,9 @@ def list_shows(uid: str) -> list[Show]:
     shows: list[Show] = []
     kwargs: dict[str, Any] = {
         "KeyConditionExpression": Key("PK").eq(_user_pk(uid)) & Key("SK").begins_with("SHOW#"),
+        # Strongly consistent: scout dedupe reads its own just-written cards,
+        # so back-to-back sweeps can't double-create. Costs 2x RCU — irrelevant here.
+        "ConsistentRead": True,
     }
     while True:
         resp = table().query(**kwargs)
@@ -107,6 +110,19 @@ def get_show(uid: str, show_id: str) -> Optional[Show]:
     resp = table().get_item(Key={"PK": _user_pk(uid), "SK": _show_sk(show_id)})
     item = resp.get("Item")
     return _item_to_show(item) if item else None
+
+
+def put_show(uid: str, show: Show) -> None:
+    """Write a complete Show under a user's partition (transfer target path)."""
+    item = show.model_dump(mode="json", exclude={"predicted_score", "score_breakdown"})
+    ddb_item = {
+        "PK": _user_pk(uid),
+        "SK": _show_sk(show.show_id),
+        **{k: v for k, v in item.items() if v is not None},
+    }
+    if ddb_item.get("series_index") is not None:  # DynamoDB rejects float
+        ddb_item["series_index"] = Decimal(str(ddb_item["series_index"]))
+    table().put_item(Item=ddb_item)
 
 
 def patch_show(uid: str, show: Show, patch: ShowPatch, fields_set: set[str]) -> Show:
@@ -194,6 +210,40 @@ def put_scout_state(uid: str, updates: dict) -> None:
     existing = get_scout_state(uid) or {"PK": _user_pk(uid), "SK": SCOUT_SK}
     existing.update(updates)
     table().put_item(Item={k: v for k, v in existing.items() if v is not None})
+
+
+# --- Users registry -----------------------------------------------------------
+# One row per account, so transfers can name a target and scheduled sweeps can
+# loop everyone. Written by scripts/create_user.sh at account creation.
+
+USERS_PK = "USERS"
+
+
+def put_user(uid: str, email: str, display_name: str) -> None:
+    table().put_item(Item={
+        "PK": USERS_PK, "SK": f"USER#{uid}",
+        "uid": uid, "email": email, "display_name": display_name,
+    })
+
+
+def list_users() -> list[dict]:
+    resp = table().query(KeyConditionExpression=Key("PK").eq(USERS_PK))
+    return [
+        {"uid": i["uid"], "email": i["email"], "display_name": i.get("display_name", i["email"])}
+        for i in resp["Items"]
+    ]
+
+
+def transfer_show(from_uid: str, to_uid: str, show: Show) -> Show:
+    """Move a card to another user's board: fresh id, recipient re-scores."""
+    moved = show.model_copy(update={
+        "show_id": str(ULID()),
+        "llm_score": None, "llm_reason": None,
+        "scored_at": None, "profile_version": None,
+    })
+    put_show(to_uid, moved)
+    delete_show(from_uid, show.show_id)
+    return moved
 
 
 # --- API tokens ---------------------------------------------------------------

@@ -237,6 +237,30 @@ def delete_show(show: str, confirm: bool = False) -> Any:
 
 
 @mcp.tool()
+def transfer_show(show: str, to_email: str, medium: str = "show") -> Any:
+    """Move a card to another household member's board (e.g. a book that turned
+    out to be theirs). Their taste engine re-scores it on their side.
+
+    Args:
+        show: show/book name (fuzzy matched) or show_id
+        to_email: the recipient's login email
+        medium: "show" (default) or "book" — which board the card is on
+    """
+    target = _resolve(_board(medium), show)
+    with _client() as c:
+        users = c.get("/api/users")
+        users.raise_for_status()
+        match = [u for u in users.json() if u["email"].lower() == to_email.lower()]
+        if not match:
+            known = ", ".join(u["email"] for u in users.json()) or "(nobody else registered)"
+            raise ValueError(f"No user {to_email}. Known: {known}")
+        resp = c.post(f"/api/shows/{target['show_id']}/transfer",
+                      json={"to_uid": match[0]["uid"]})
+        resp.raise_for_status()
+    return f"Sent '{target['name']}' to {match[0]['display_name']}'s board"
+
+
+@mcp.tool()
 def get_taste_profile(medium: str = "show") -> Any:
     """Read Claude's taste profile of the owner, its status, and last scoring run.
 

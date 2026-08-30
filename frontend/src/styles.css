@@ -553,6 +553,35 @@ input {
   background: var(--red-deep);
 }
 
+.card-transfer {
+  position: absolute;
+  bottom: 0.3rem;
+  right: 0.4rem;
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-faint);
+  opacity: 0;
+  transition: opacity 100ms ease;
+}
+
+.card:hover .card-transfer,
+.card-transfer:focus-visible,
+.card-transfer.card-transfer-armed {
+  opacity: 1;
+}
+
+.card-transfer:hover {
+  color: var(--gold-deep, #8a6d1a);
+}
+
+.card-transfer-armed {
+  background: var(--gold, #c9a227);
+  color: var(--card);
+  padding: 0.15rem 0.4rem;
+}
+
 /* quick add */
 
 .quick-add {

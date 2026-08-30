@@ -118,6 +118,31 @@ def delete_show(show_id: str, uid: str = Depends(current_uid)) -> None:
     db.delete_show(uid, show_id)
 
 
+@app.get("/api/users")
+def other_users(uid: str = Depends(current_uid)) -> list[dict]:
+    """Everyone except the caller — transfer targets."""
+    return [u for u in db.list_users() if u["uid"] != uid]
+
+
+class TransferRequest(BaseModel):
+    to_uid: str
+
+
+@app.post("/api/shows/{show_id}/transfer")
+def transfer_show(show_id: str, req: TransferRequest, uid: str = Depends(current_uid)):
+    show = db.get_show(uid, show_id)
+    if show is None:
+        raise HTTPException(404, "Show not found")
+    if req.to_uid == uid or req.to_uid not in {u["uid"] for u in db.list_users()}:
+        raise HTTPException(403, "Not a valid transfer target")
+    moved = db.transfer_show(uid, req.to_uid, show)
+    try:  # recipient's taste engine scores it against their profile
+        _invoke_scorer({"uid": req.to_uid, "mode": "single", "show_id": moved.show_id})
+    except Exception:
+        log.exception("post-transfer scoring invoke failed")
+    return moved
+
+
 class NotesUpdate(BaseModel):
     notes: str = Field(max_length=4000)
 

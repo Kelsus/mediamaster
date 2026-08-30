@@ -116,5 +116,22 @@ export function useShowMutations(medium: Medium) {
     }),
   )
 
-  return { addShow, patchShow, deleteShow }
+  // Transfer looks like a delete locally: the card leaves this board.
+  const transferShow = withOptimistic(
+    (args: { showId: string; toUid: string }) =>
+      api(`/api/shows/${args.showId}/transfer`, {
+        method: 'POST',
+        body: JSON.stringify({ to_uid: args.toUid }),
+      }),
+    (board, args) => ({
+      columns: Object.fromEntries(
+        Object.entries(board.columns).map(([k, v]) => [
+          k,
+          v.filter((s) => s.show_id !== args.showId),
+        ]),
+      ) as Board['columns'],
+    }),
+  )
+
+  return { addShow, patchShow, deleteShow, transferShow }
 }

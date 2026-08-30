@@ -20,11 +20,24 @@ STALE_LOCK_MINUTES = 20
 
 
 def handler(event, context):
-    # The monthly EventBridge rule can't know the Cognito sub; resolve the
-    # pool's (single) user when uid is absent.
-    uid = event.get("uid") or _default_uid()
+    uid = event.get("uid")
     mode = event.get("mode", "full")
     medium = event.get("medium", "show")
+    if uid is None:
+        # Scheduled sweeps carry no uid: run for every registered user.
+        results = {}
+        for user in db.list_users():
+            log.info("scheduled sweep for %s", user["email"])
+            try:
+                results[user["email"]] = _dispatch(user["uid"], mode, medium, event)
+            except Exception:
+                log.exception("sweep failed for %s; continuing", user["email"])
+                results[user["email"]] = {"error": True}
+        return results
+    return _dispatch(uid, mode, medium, event)
+
+
+def _dispatch(uid: str, mode: str, medium: str, event: dict):
     if mode == "single":
         return score_single(uid, event["show_id"])
     if mode == "scout":
@@ -137,17 +150,6 @@ def _add(totals: dict, usage: dict) -> None:
         totals[k] += usage.get(k, 0)
 
 
-def _default_uid() -> str:
-    import os
-
-    import boto3
-
-    users = boto3.client("cognito-idp").list_users(
-        UserPoolId=os.environ["USER_POOL_ID"], Limit=2
-    )["Users"]
-    if len(users) != 1:
-        raise RuntimeError(f"expected exactly 1 user, found {len(users)}")
-    return next(a["Value"] for a in users[0]["Attributes"] if a["Name"] == "sub")
 
 
 def scout_is_running(state: dict | None) -> bool:

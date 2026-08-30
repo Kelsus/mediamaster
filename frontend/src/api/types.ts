@@ -41,6 +41,12 @@ export interface Show {
   score_breakdown?: ScoreBreakdown
 }
 
+export interface OtherUser {
+  uid: string
+  email: string
+  display_name: string
+}
+
 export interface TasteProfile {
   profile_text: string | null
   notes: string
