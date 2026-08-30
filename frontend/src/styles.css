@@ -582,6 +582,19 @@ input {
   padding: 0.15rem 0.4rem;
 }
 
+.card-transfer-targets {
+  position: absolute;
+  bottom: 0.3rem;
+  right: 0.4rem;
+  display: flex;
+  gap: 0.25rem;
+}
+
+.card-transfer-targets .card-transfer {
+  position: static;
+  opacity: 1;
+}
+
 .new-chip {
   flex-shrink: 0;
   font-size: 0.6rem;

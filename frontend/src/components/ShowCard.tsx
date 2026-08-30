@@ -110,36 +110,51 @@ export const ShowCard = memo(function ShowCard({ show, onPatch, onDelete, onTran
   )
 })
 
-/** Two-click "not mine": arms to "→ Name?", second click transfers the card. */
+/** Two-click "not mine": arming reveals one confirm button per household member. */
 function TransferButton({ onTransfer }: { onTransfer: (toUid: string) => void }) {
   const others = useOtherUsers()
   const [armed, setArmed] = useState(false)
 
   useEffect(() => {
     if (!armed) return
-    const t = setTimeout(() => setArmed(false), 2500)
+    const t = setTimeout(() => setArmed(false), 4000)
     return () => clearTimeout(t)
   }, [armed])
 
-  const target = others.data?.[0]
-  if (!target) return null
-  const firstName = target.display_name.split(' ')[0]
+  const targets = others.data ?? []
+  if (targets.length === 0) return null
+  const first = (u: { display_name: string }) => u.display_name.split(' ')[0]
+
+  if (!armed) {
+    return (
+      <button
+        type="button"
+        className="card-transfer"
+        title="Not mine — send to someone else's board"
+        onClick={() => setArmed(true)}
+        onPointerDown={(e) => e.stopPropagation()}
+        onKeyDown={(e) => e.stopPropagation()}
+      >
+        {targets.length === 1 ? `→ ${first(targets[0])}` : '→ …'}
+      </button>
+    )
+  }
 
   return (
-    <button
-      type="button"
-      className={`card-transfer ${armed ? 'card-transfer-armed' : ''}`}
-      title={
-        armed
-          ? `Click again to move this to ${target.display_name}'s board`
-          : `Not mine — send to ${target.display_name}`
-      }
-      onClick={() => (armed ? onTransfer(target.uid) : setArmed(true))}
-      onPointerDown={(e) => e.stopPropagation()}
-      onKeyDown={(e) => e.stopPropagation()}
-    >
-      {armed ? `→ ${firstName}?` : `→ ${firstName}`}
-    </button>
+    <span className="card-transfer-targets" onPointerDown={(e) => e.stopPropagation()}>
+      {targets.map((t) => (
+        <button
+          key={t.uid}
+          type="button"
+          className="card-transfer card-transfer-armed"
+          title={`Move this to ${t.display_name}'s board`}
+          onClick={() => onTransfer(t.uid)}
+          onKeyDown={(e) => e.stopPropagation()}
+        >
+          → {first(t)}?
+        </button>
+      ))}
+    </span>
   )
 }
 
