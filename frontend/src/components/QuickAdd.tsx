@@ -3,10 +3,11 @@ import type { Medium, ShowType } from '../api/types'
 
 interface Props {
   medium: Medium
+  placeholder: string
   onAdd: (name: string, showType: ShowType, author?: string) => void
 }
 
-export function QuickAdd({ medium, onAdd }: Props) {
+export function QuickAdd({ medium, placeholder, onAdd }: Props) {
   const [name, setName] = useState('')
   const [author, setAuthor] = useState('')
   const [type, setType] = useState<ShowType>(
@@ -35,7 +36,7 @@ export function QuickAdd({ medium, onAdd }: Props) {
       <div className="quick-add quick-add-book">
         <input
           value={name}
-          placeholder="Add something to read…"
+          placeholder={placeholder}
           onChange={(e) => setName(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && submit()}
         />
@@ -54,7 +55,7 @@ export function QuickAdd({ medium, onAdd }: Props) {
     <div className="quick-add">
       <input
         value={name}
-        placeholder="Add something to watch…"
+        placeholder={placeholder}
         onChange={(e) => setName(e.target.value)}
         onKeyDown={(e) => e.key === 'Enter' && submit()}
       />

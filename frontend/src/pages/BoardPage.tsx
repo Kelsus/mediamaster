@@ -35,6 +35,21 @@ class CardKeyboardSensor extends KeyboardSensor {
   ]
 }
 
+const ADD_PLACEHOLDERS: Record<Medium, Record<Status, string>> = {
+  show: {
+    to_watch: 'Add something to watch…',
+    watching: 'Add something you’re watching…',
+    done: 'Add something you’ve watched…',
+    poubelle: 'Add something you hated…',
+  },
+  book: {
+    to_watch: 'Add something to read…',
+    watching: 'Add something you’re reading…',
+    done: 'Add something you’ve read…',
+    poubelle: 'Add something you abandoned…',
+  },
+}
+
 export function BoardPage({ medium }: { medium: Medium }) {
   const { data, isLoading, error } = useBoard(medium)
   const { addShow, patchShow, deleteShow, transferShow } = useShowMutations(medium)
@@ -209,14 +224,13 @@ export function BoardPage({ medium }: { medium: Medium }) {
               onDelete={(showId) => deleteShow.mutate({ showId })}
               onTransfer={(showId, toUid) => transferShow.mutate({ showId, toUid })}
             >
-              {status === 'to_watch' && (
-                <QuickAdd
-                  medium={medium}
-                  onAdd={(name, show_type, author) =>
-                    addShow.mutate({ name, show_type, author })
-                  }
-                />
-              )}
+              <QuickAdd
+                medium={medium}
+                placeholder={ADD_PLACEHOLDERS[medium][status]}
+                onAdd={(name, show_type, author) =>
+                  addShow.mutate({ name, show_type, author, status })
+                }
+              />
             </Column>
           ))}
         </main>

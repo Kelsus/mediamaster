@@ -77,9 +77,16 @@ export function useShowMutations(medium: Medium) {
     })
 
   const addShow = withOptimistic(
-    (args: { name: string; show_type: ShowType; author?: string; service?: string; source?: string }) =>
-      api('/api/shows', { method: 'POST', body: JSON.stringify({ ...args, medium }) }),
+    (args: {
+      name: string
+      show_type: ShowType
+      status?: Status
+      author?: string
+      service?: string
+      source?: string
+    }) => api('/api/shows', { method: 'POST', body: JSON.stringify({ ...args, medium }) }),
     (board, args) => {
+      const status: Status = args.status ?? 'to_watch'
       const temp: Show = {
         show_id: `temp-${Date.now()}`,
         name: args.name,
@@ -88,13 +95,13 @@ export function useShowMutations(medium: Medium) {
         author: args.author,
         service: args.service,
         source: args.source,
-        status: 'to_watch',
+        status,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
         status_changed_at: new Date().toISOString(),
         predicted_score: Number.POSITIVE_INFINITY, // pin to top until the server scores it
       }
-      return { columns: { ...board.columns, to_watch: [temp, ...board.columns.to_watch] } }
+      return { columns: { ...board.columns, [status]: [temp, ...board.columns[status]] } }
     },
   )
 
